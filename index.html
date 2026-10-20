@@ -600,15 +600,19 @@ function project(idx, lat, lon, maxMi) {
 }
 
 /* ================= classification & scoring ================= */
-const WEIRD_RE = /(world'?s\s+(largest|biggest|smallest|tallest|oldest|only|first)|\bgiant\b|\blargest\b|\bbiggest\b|dinosaur|\bdinos?\b|oddit|curiosit|\bstrange\b|\bweird\b|myster|bizarre|\bghosts?\b|haunted|\bufos?\b|\baliens?\b|bigfoot|sasquatch|muffler\s+man|roadside|\bfolly\b|fib(er|re)glass|\bminiature|\bwigwam|teapot|carhenge|\bspite\b|\bvortex\b|mumm(y|ies)|\bwax\b|\bcircus\b|\bneon\b|\bmonsters?\b|\breplica\b|bunyan|jackalope|spaceship|\bbig\s+(duck|chicken|fish|cow|apple|peach|pineapple|banana|shoe|chair|ball|bear|muskie|potato|thermometer|rooster|bull|bunny|basket|indian|boy)\b)/i;
+const WEIRD_RE = /(world'?s\s+(largest|biggest|smallest|tallest|oldest|only|first)|\bgiant\b|\blargest\b|\bbiggest\b|dinosaur|\bdinos?\b|oddit|curiosit|\bstrange\b|\bweird\b|myster|bizarre|\bghosts?\b|haunted|\bufos?\b|\baliens?\b|bigfoot|sasquatch|muffler\s+man|roadside|\bfolly\b|fib(er|re)glass|\bminiature|\bwigwam|teapot|carhenge|\bspite\b|\bvortex\b|mumm(y|ies)|\bwax\b|\bcircus\b|\bneon\b|\bmonsters?\b|\breplica\b|bunyan|jackalope|spaceship|\bbig\s+(duck|chicken|fish|cow|apple|peach|pineapple|banana|shoe|chair|ball|bear|muskie|potato|thermometer|rooster|bull|bunny|basket|indian|boy)\b|\bmermaids?\b|\btrolls?\b|\bgnomes?\b|\bhobbits?\b|\bfair(y|ies)\b|\bt-?rex\b|\btyrannosaur|folk art|outsider art|visionary art|sculpture garden|\btotem|\bbottle (house|tree|wall)|milk bottle|coffee ?pot|\bhot ?dog stand|\bdoughnut|\bice cream cone)/i;
+// The words from "mermaids" onward were added after measuring hits and misfires across the Northeast places index (Oct 2026).
 const GENERIC_RE = /^(the\s+)?(scenic\s+)?(view(point)?|overlook|vista|lookout|scenic view|mural|sculpture|statue|memorial|monument|plaque|historical marker|historic marker|marker|sign|bench|artwork|art|untitled|waterfall|falls|cave|ruins|museum|park|garden|windmill|lighthouse|attraction)$/i;
 const MARKER_RE = /\b(historic(al)?\s+marker|marker)\b/i;
 
 const HERITAGE_NAME_RE = /\b(state historic site|national historic|historic(al)? (site|park|district|landmark)|battlefield|national (monument|memorial|historical park))\b/i;
 const isHeritage = (t, name) => !!(t['ref:nhl'] || t['heritage:operator'] === 'nhl' || t.protection_object === 'heritage' || /historic/i.test(t.protection_title || '') || HERITAGE_NAME_RE.test(name));
+// Individual rides and animal exhibits inside parks: the park is the stop, not each coaster.
+const RIDE_RE = /^(animal|amusement_ride|roller_coaster|carousel|water_slide|drop_tower|log_flume|log_ride|bumper_car|pirate_ship|swinging_ship|kiddie_ride|dark_ride|swing_carousel|swing_ride|chair_swing|big_wheel|teacup|twist_ride|tilt-a-whirl_ride|shoot_the_chute|raft_slide|car_ride|train_ride|boat_ride|water_playground|game_installation)\b/;
 function classify(t, name) {
   const text = `${name} ${t.description || ''} ${t.artwork_type || ''}`;
-  const weird = WEIRD_RE.test(text);
+  const ride = t.tourism === 'attraction' && RIDE_RE.test(t.attraction || '');
+  let weird = WEIRD_RE.test(text);
   const tour = t.tourism, hist = t.historic, mm = t.man_made;
   const nat = t.natural || (t.waterway === 'waterfall' ? 'waterfall' : null);
   let cat = 'attraction', base = 1;
@@ -632,7 +636,9 @@ function classify(t, name) {
   else if (tour === 'attraction') { cat = 'attraction'; base = 2.0; }
 
   // A "Giant Mountain" or "Giant Washbowl Overlook" is a place name, not a roadside oddity.
-  if (weird && !nat && !t.boundary && !t.leisure && tour !== 'viewpoint') { cat = 'weird'; base += 2.5; }
+  if (t.attraction === 'haunted_house') weird = true;
+  if (weird && !ride && !nat && !t.boundary && !t.leisure && tour !== 'viewpoint') { cat = 'weird'; base += 2.5; }
+  if (ride) base -= 4;
   if (t.wikipedia) base += 3.5; else if (t.wikidata) base += 1.8;
   if (t['ref:nhl'] || t['heritage:operator'] === 'nhl') base += 1.0;
   if (t.website || t['contact:website'] || t.url) base += 0.5;
