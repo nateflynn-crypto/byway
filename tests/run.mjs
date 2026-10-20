@@ -58,10 +58,10 @@ function parseAround(q) {
   for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
   return { r: +m[1], pts };
 }
-function overpassAnswer(q) {
+function overpassAnswer(q, extra = []) {
   const a = parseAround(q);
   if (!a) return { elements: [] };
-  const els = FIX.elements.filter(e => {
+  const els = FIX.elements.concat(extra).filter(e => {
     const p = e.lat != null ? [e.lat, e.lon] : [e.center.lat, e.center.lon];
     for (let i = 1; i < a.pts.length; i++) if (segDistM(p, a.pts[i - 1], a.pts[i]) <= a.r) return true;
     return a.pts.length === 1 && havM(p, a.pts[0]) <= a.r;
@@ -111,7 +111,7 @@ async function handle(route, world) {
     if (b === 504) return route.fulfill({ status: 504, contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: '<html><body>504 Gateway Time-out</body></html>' });
     if (b === 'xml') return route.fulfill({ status: 200, contentType: 'application/osm3s+xml', headers: { 'access-control-allow-origin': '*' }, body: '<?xml version="1.0"?><osm><remark>runtime error</remark></osm>' });
     if (b === 'remark') return json({ elements: [], remark: 'runtime error: Query timed out in "query" at line 1 after 100 seconds.' });
-    return json(overpassAnswer(q));
+    return json(overpassAnswer(q, world.extra));
   }
   if (/\.wikipedia\.org$/.test(host)) {
     const titles = (u.searchParams.get('titles') || '').split('|').filter(Boolean);
@@ -213,6 +213,7 @@ test('full scan: every section queried once, sensible finds and shortlist', asyn
   for (const good of ['Fort William Henry', 'National Museum of Racing and Hall of Fame', 'The Hyde Collection'])
     assert(r.shortlist.includes(good), `strong find missing from shortlist: ${good}`);
   assert(byName['Fort William Henry'].info, 'Wikipedia enrichment did not attach an extract');
+  assert(r.shortlist.length === 10, `a ~136 mi day trip should get a 10-stop shortlist, got ${r.shortlist.length}`);
   assert(!world.pageErrors, `page errors: ${world.pageErrors}`);
   await ctx.close();
 });
@@ -342,6 +343,81 @@ print(txt)`;
   const out = spawnSync('python3', ['-c', py], { input: JSON.stringify(q), encoding: 'utf8' });
   assert(out.status === 0, `decoder crashed: ${out.stderr}`);
   assert(out.stdout.trim() === url, `QR decoded to "${out.stdout.trim()}"`);
+});
+
+test('shortlist size: about 10 per day of driving, capped at 60', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world);
+  const sz = await page.evaluate(() => [50, 134, 400, 600, 800, 2450, 5000].map(window.__byway.shortlistSize));
+  assert(JSON.stringify(sz) === JSON.stringify([10, 10, 10, 15, 20, 60, 60]), `sizes for 50/134/400/600/800/2450/5000 mi: ${sz}`);
+  await ctx.close();
+});
+
+test('find cap: at most 100, spread along the road, weak finds last', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world);
+  const r = await page.evaluate(() => {
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const list = [];
+    for (let i = 0; i < 300; i++) list.push({ id: 'c' + i, along: rnd() * 20, score: 1 + rnd() * 5 });          // dense city, miles 0–20
+    for (let i = 0; i < 80; i++) list.push({ id: 'r' + i, along: 20 + rnd() * 380, score: 0.6 + rnd() * 2 });  // sparse countryside
+    for (let i = 0; i < 40; i++) list.push({ id: 'w' + i, along: rnd() * 400, score: -1 + rnd() * 1.4 });      // weak / junk
+    const best = list.reduce((a, b) => (b.score > a.score ? b : a));
+    const out = window.__byway.spreadCap(list, 100, 400);
+    return { n: out.length, city: out.filter(f => f.along < 20).length, weak: out.filter(f => f.score < 0.5).length,
+             hasBest: out.some(f => f.id === best.id), uniq: new Set(out.map(f => f.id)).size,
+             small: window.__byway.spreadCap(list.slice(0, 50), 100, 400).length };
+  });
+  assert(r.n === 100 && r.uniq === 100, `cap returned ${r.n} (${r.uniq} unique)`);
+  assert(r.city <= 30, `dense first 20 mi took ${r.city} of 100 slots`);
+  assert(r.weak === 0, `weak finds used ${r.weak} slots while good ones were left out`);
+  assert(r.hasBest, 'the single best find was dropped');
+  assert(r.small === 50, 'a list under the cap should be returned whole');
+  await ctx.close();
+});
+
+test('find cap in the app: dense corridor shows best 100 of all, chips count everything', async () => {
+  const world = makeWorld();
+  // 260 extra museums clustered around Saratoga Springs (route mile ~30), plus the regular fixture.
+  world.extra = Array.from({ length: 260 }, (_, i) => ({ type: 'node', id: 10000 + i, lat: 43.07 + (i % 20) * 0.002, lon: -73.79 + Math.floor(i / 20) * 0.002, tags: { name: `Test Museum ${i}`, tourism: 'museum', ...(i % 3 ? {} : { website: 'https://example.org' }) } }));
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  const r = await page.evaluate(() => {
+    const S = window.__byway.state;
+    document.querySelector('[data-action="view"][data-view="all"]').click();
+    return { total: S.finds.length, visible: S.visible.length, cards: document.querySelectorAll('#list .card').length,
+             hint: document.querySelector('#hint').textContent, allChip: document.querySelector('[data-action="lens"][data-lens="all"] .n').textContent,
+             fort: S.visible.some(f => f.name === 'Fort William Henry'), jb: S.visible.some(f => f.name === 'John Brown Farm State Historic Site'),
+             stat: document.querySelector('#summary .stats').textContent };
+  });
+  assert(r.total > 250 && r.visible === 100 && r.cards === 100, `total ${r.total}, visible ${r.visible}, cards ${r.cards}`);
+  assert(/best 100 of \d+/.test(r.hint), `hint: ${r.hint}`);
+  assert(+r.allChip.replace(/,/g, '') === r.total, `"All" chip shows ${r.allChip}, expected the full ${r.total}`);
+  assert(r.fort && r.jb, 'cap squeezed out finds elsewhere on the route because of one dense city');
+  assert(r.stat.includes(r.total.toLocaleString()), 'summary stat should report the full count');
+  // Category filter applies before the cap: History should still show its few finds, not be emptied by museums.
+  const hist = await page.evaluate(() => { document.querySelector('[data-action="lens"][data-lens="history"]').click(); return window.__byway.state.visible.map(f => f.name); });
+  assert(hist.includes('Fort William Henry') && hist.includes('Hackensack Covered Bridge'), `History view: ${hist}`);
+  await ctx.close();
+});
+
+test('picks: the 10th star warns that the drive splits into two Google Maps links', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  await page.click('[data-action="view"][data-view="all"]');
+  const toasts = [];
+  for (let i = 0; i < 10; i++) {
+    await page.locator('#list .card .star[aria-pressed="false"]').first().click();
+    const t = await page.evaluate(() => { const el = document.querySelector('#toast'); return el.classList.contains('show') ? el.textContent : ''; });
+    toasts.push(t);
+    await page.evaluate(() => document.querySelector('#toast').classList.remove('show'));
+  }
+  assert(toasts.slice(0, 9).every(t => !/parts/.test(t)), `warned too early: ${JSON.stringify(toasts.slice(0, 9))}`);
+  assert(/opens in 2 parts/.test(toasts[9]), `no heads-up on the 10th pick: "${toasts[9]}"`);
+  const picks = await page.evaluate(() => window.__byway.state.picks.size);
+  assert(picks === 10, `soft limit should still allow the 10th pick (have ${picks})`);
+  await ctx.close();
 });
 
 // BYWAY_DEBUG=1 node tests/run.mjs debug  → prints every find with score and shortlist mark, for tuning.
