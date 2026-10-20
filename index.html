@@ -271,7 +271,7 @@ footer p{margin:6px 0}
     <footer>
       <details>
         <summary>How it works</summary>
-        <p>Routing comes from OSRM. Byway then asks OpenStreetMap (through the Overpass API) for named attractions, museums, landmarks, historic sites, public art, viewpoints, waterfalls, covered bridges and more inside your corridor. Places linked to Wikipedia get a description and photo.</p>
+        <p>Routing comes from OSRM. Byway first looks up Wikipedia articles along your corridor and keeps the ones that are real stops — museums, forts, waterfalls, parks, historic sites — skipping towns, schools, offices and events. Then it asks OpenStreetMap (through the Overpass API) for smaller spots too: viewpoints, covered bridges, public art and roadside oddities. Wikipedia places get a description and photo.</p>
         <p>Distances are straight-line from the route, and detour times are rough estimates. Always check hours and access before you leave the highway.</p>
       </details>
       <p>Runs entirely in your browser — no account, no tracking. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · tiles © OpenStreetMap · routing <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a> · search <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a> · descriptions Wikipedia.</p>
@@ -945,7 +945,8 @@ function wikiTags(wt) {
     if (WP_GENERIC.test(head)) {
       const t = title.replace(/\s*\([^)]*\)$/, '');
       for (const [re, r] of WP_STRONG) if (re.test(t)) { m = r; break; }
-      if (!m) for (const [re, r] of WP_RULES) if (re.test(t)) { m = r === null ? 'drop' : r; break; }
+      // Place names often contain lake/valley/hill ("Mohawk Valley Grange Hall"), so natural-feature words don't count here.
+      if (!m) for (const [re, r] of WP_RULES) if (!(r && r.tags.natural === 'feature') && re.test(t)) { m = r === null ? 'drop' : r; break; }
       if (!m) m = WP({ historic: 'building' }, -2.5);
     } else {
       for (const [re, r] of WP_STRONG) if (re.test(head)) { m = r; break; }

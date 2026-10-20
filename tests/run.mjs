@@ -559,11 +559,12 @@ test('wikipedia: articles are filtered to real stops and typed sensibly', async 
       hof: t('New York State Baseball Hall of Fame', ''),
       monument: t('Soldiers and Sailors Monument', ''),
       casino: t('Canfield Casino and Congress Park', 'Historic casino and park in Saratoga Springs, New York'),
+      grange: t('Mohawk Valley Grange Hall', 'United States historic place'),
     };
   });
   const want = { museum: 'museum', fort: 'history', site: 'history', falls: 'nature', mountain: 'nature', race: 'attraction', nodescMuseum: 'museum',
     nodescOther: null, postOffice: null, school: null, battle: null, city: null, station: null, games: null, hotel: null, hamlet: null,
-    grant: 'history', nhs: 'history', generic: 'history', genericPO: null, abandoned: null, river: null, giant: 'nature', home: 'history', hof: 'museum', monument: 'art', casino: 'attraction' };
+    grant: 'history', nhs: 'history', generic: 'history', genericPO: null, abandoned: null, river: null, giant: 'nature', home: 'history', hof: 'museum', monument: 'art', casino: 'attraction', grange: 'history' };
   for (const [k, v] of Object.entries(want)) assert(r[k] === v, `${k}: got ${r[k]}, want ${v}`);
   const b = await page.evaluate(() => { const s = (n, d) => { const m = window.__byway.wikiTags({ name: n, wpdesc: d, wikipedia: 'en:' + n }); return window.__byway.classify(m.tags, n).base + (m.adj || 0); };
     return { cemetery: s('Jonesville Cemetery', 'Historic site in Saratoga County, New York'), grant: s('Grant Cottage State Historic Site', 'United States historic place'), stadium: s('Joseph L. Bruno Stadium', 'Baseball stadium in Troy, New York'), stateFort: s('Fort William Henry', 'Fort in Lake George, New York') }; });

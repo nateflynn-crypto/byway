@@ -14,12 +14,14 @@ Everything runs in the browser — one self-contained `index.html`, no build ste
 | --- | --- |
 | Place search & "use my location" | [Photon](https://photon.komoot.io) (OpenStreetMap), Nominatim fallback |
 | Driving route | [OSRM](https://project-osrm.org) public servers |
-| Places along the route | OpenStreetMap via the [Overpass API](https://overpass-api.de) |
+| Places along the route | Wikipedia articles near the route (geosearch), then OpenStreetMap via the [Overpass API](https://overpass-api.de) |
 | Descriptions & photos | Wikipedia / Wikidata |
 | Map tiles | © OpenStreetMap contributors (tile.openstreetmap.org) |
 | Navigation handoff | Google Maps URLs (`dir_action=navigate`) |
 
-Places come from the free public Overpass servers, which get busy. Byway splits the route into ~40 mi sections, sends them to whichever mirror is healthy (a mirror that rate-limits or errors is set aside for a minute), and saves each answer in the browser for a week, so a retry or a repeat drive only asks for what's missing.
+Places come from two sources. Wikipedia's "articles near a point" search runs first: about one lookup per 3–5 miles of road, filtered by each article's short description to real stops (museums, forts, waterfalls, parks, historic sites — not towns, schools, offices or events). It's quick and dependable, so the list fills in seconds. OpenStreetMap then adds the smaller spots (viewpoints, covered bridges, public art, roadside oddities) through the free public Overpass servers, which get busy; when they don't answer, the Wikipedia finds still stand and Retry asks again later. The same place from both sources is merged by its Wikidata ID or title.
+
+For OpenStreetMap, Byway splits the route into ~40 mi sections, sends them to whichever mirror is healthy (a mirror that rate-limits or errors is set aside for a minute), and saves each answer (Wikipedia's too) in the browser for a week, so a retry or a repeat drive only asks for what's missing.
 
 Route links keep the trip in the address (`?from=…&via=…&to=…`), so a link reopens the same drive.
 
