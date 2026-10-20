@@ -289,10 +289,15 @@ const CFG = {
     'https://overpass-api.de/api/interpreter',
     'https://overpass.private.coffee/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   ],
   // Live tests (Oct 2026): a 40 mi section in dense country took ~95 s on overpass-api.de and a 120 mi section
   // never finished in 175 s, so sections are small and each attempt gets ~2 min before failing over.
   overpassMs: 120000,
+  overpassTries: 3,       // hosts tried per section before it's marked failed
+  benchMaxWaitMs: 15000,  // longest we'll wait for a benched host when every host is benched
+  cacheDays: 7,           // Overpass answers are reused for a week (memory + localStorage)
+  cacheMaxChars: 3500000, // localStorage budget for cached answers (~3.5 MB of the usual 5 MB)
   chunkMi: 40,
   concurrency: 2,
 };
@@ -751,25 +756,101 @@ function overpassQuery(poly, rM) {
     `nwr${A}[boundary~"^(national_park|protected_area)$"][name][wikipedia];` +
     `);out tags center qt;`;
 }
-async function overpass(query, signal, offset = 0) {
+/* ---- Overpass: answer cache ----
+   Answers are keyed by a hash of the exact query (route section + corridor width), so a retry,
+   a reload or a repeat of the same drive reuses what already came back instead of asking again. */
+const opMem = new Map();
+const OP_PREFIX = 'byway.op.', OP_INDEX = 'byway.opidx';
+function qHash(s) {
+  let a = 0x811c9dc5, b = 0x01000193 ^ s.length;
+  for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 0x01000193); b = Math.imul(b ^ c, 0x5bd1e995); b ^= b >>> 15; }
+  return (a >>> 0).toString(36) + (b >>> 0).toString(36) + s.length.toString(36);
+}
+function opIndex() { try { return JSON.parse(localStorage.getItem(OP_INDEX) || '[]'); } catch { return []; } }
+function opIndexSave(ix) { try { localStorage.setItem(OP_INDEX, JSON.stringify(ix)); } catch {} }
+function cacheGet(query) {
+  const k = qHash(query);
+  if (opMem.has(k)) return opMem.get(k);
+  try {
+    const v = localStorage.getItem(OP_PREFIX + k);
+    if (!v) return null;
+    const o = JSON.parse(v);
+    if (Date.now() - o.t > CFG.cacheDays * 864e5) { localStorage.removeItem(OP_PREFIX + k); opIndexSave(opIndex().filter(e => e.k !== k)); return null; }
+    opMem.set(k, o.j);
+    return o.j;
+  } catch { return null; }
+}
+function cachePut(query, j) {
+  const k = qHash(query);
+  const slim = { elements: (j.elements || []).map(e => ({ type: e.type, id: e.id, lat: e.lat, lon: e.lon, center: e.center, tags: e.tags })) };
+  opMem.set(k, slim);
+  let str;
+  try { str = JSON.stringify({ t: Date.now(), j: slim }); } catch { return; }
+  if (str.length > CFG.cacheMaxChars / 2) return;
+  let ix = opIndex().filter(e => e.k !== k && Date.now() - e.t <= CFG.cacheDays * 864e5);
+  let total = ix.reduce((n, e) => n + e.n, 0);
+  ix.sort((a, b) => a.t - b.t); // oldest first, evicted first
+  while (ix.length && total + str.length > CFG.cacheMaxChars) { const e = ix.shift(); total -= e.n; try { localStorage.removeItem(OP_PREFIX + e.k); } catch {} }
+  for (let tries = 0; tries < 4; tries++) {
+    try { localStorage.setItem(OP_PREFIX + k, str); ix.push({ k, t: Date.now(), n: str.length }); opIndexSave(ix); return; }
+    catch { const e = ix.shift(); if (!e) return; try { localStorage.removeItem(OP_PREFIX + e.k); } catch {} } // storage full: evict and retry
+  }
+}
+
+/* ---- Overpass: host health ----
+   A host that rate-limits (429), errors (5xx), refuses the connection, or sends back junk is
+   "benched" for a while so the next sections go to a healthier mirror instead of piling on. */
+const hostState = new Map(); // url -> { until, why }
+const benchLeft = url => Math.max(0, ((hostState.get(url) || {}).until || 0) - Date.now());
+function bench(url, ms, why) { hostState.set(url, { until: Date.now() + ms, why }); }
+function hostOrder(offset) {
+  const n = CFG.overpass.length;
+  return CFG.overpass
+    .map((u, i) => ({ u, rank: (i - offset + n) % n, left: benchLeft(u) }))
+    .sort((a, b) => (a.left > 0) - (b.left > 0) || a.left - b.left || a.rank - b.rank)
+    .map(x => x.u);
+}
+async function overpass(query, signal, offset = 0, onNote) {
+  const hit = cacheGet(query);
+  if (hit) return hit;
   let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const url = CFG.overpass[(attempt + offset) % CFG.overpass.length];
+  const tried = new Set();
+  for (let attempt = 0; attempt < CFG.overpassTries; attempt++) {
+    const url = hostOrder(offset).find(u => !tried.has(u)) || hostOrder(offset)[0];
+    tried.add(url);
+    const wait = Math.min(benchLeft(url), CFG.benchMaxWaitMs);
+    if (wait > 0) {
+      if (onNote) onNote('The map-data servers are busy — waiting a moment before asking again…');
+      await sleep(wait);
+      if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    }
+    const t0 = Date.now();
     try {
       const j = await fetchJSON(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
       }, CFG.overpassMs, signal);
-      if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error(j.remark);
+      // Overpass reports a query that ran out of time or memory as HTTP 200 with a "remark".
+      if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) { const e = new Error(j.remark); e.remark = true; throw e; }
+      hostState.delete(url);
+      if (onNote) onNote(null);
+      cachePut(query, j);
       return j;
     } catch (e) {
       if (signal && signal.aborted) throw e;
       lastErr = e;
-      await sleep(1200 * (attempt + 1));
+      const fast = Date.now() - t0 < 3000;
+      if (e.status === 429) bench(url, 60000, 'rate-limited');
+      else if (e.status >= 500) bench(url, 30000, `HTTP ${e.status}`);
+      else if (e.remark) bench(url, 10000, 'query timed out on server');
+      else if (e.name === 'AbortError') bench(url, 30000, 'no answer');
+      else if (fast) bench(url, 60000, 'refused');           // connection refused/reset: usually a block
+      else bench(url, 30000, e.message || 'bad answer');     // e.g. an HTML/XML error page instead of JSON
+      if (onNote) onNote('A map-data server didn’t answer — trying another…');
     }
   }
-  throw lastErr;
+  throw lastErr || new Error('map-data servers unavailable');
 }
 function makeChunks(route, R) {
   const pts = simplify(route.pts, 0.35);
@@ -928,12 +1009,13 @@ async function run(mode = 'full') {
     state.allLimit = 150; state.failed = []; state.queryRadius = state.radius;
     recompute(); render();
     const chunks = makeChunks(route, state.radius);
-    let done = 0;
-    const progress = () => setStatus({ kind: 'busy', text: `Scouting the corridor · section ${Math.min(done + 1, chunks.length)} of ${chunks.length} · ${state.finds.length.toLocaleString()} finds`, pct: done / chunks.length });
+    let done = 0, note = null;
+    const progress = () => setStatus({ kind: 'busy', text: `Scouting the corridor · section ${Math.min(done + 1, chunks.length)} of ${chunks.length} · ${state.finds.length.toLocaleString()} finds` + (note ? ` · ${note}` : ''), pct: done / chunks.length });
+    const onNote = n => { if (n === note || stale()) return; note = n; progress(); };
     progress();
     const tick = throttle(() => { if (!stale()) { recompute(); render(); progress(); } }, 450);
     await pool(chunks, CFG.concurrency, async (ch, k) => {
-      try { const j = await overpass(ch.query, sig, k % 2); if (stale()) return; ingest(j.elements || []); }
+      try { const j = await overpass(ch.query, sig, k % 2, onNote); if (stale()) return; ingest(j.elements || []); }
       catch (e) { if (sig.aborted) return; console.warn('section failed', e); state.failed.push(ch); }
       done++; tick();
     });
@@ -957,8 +1039,9 @@ async function retryFailed() {
   setBusy(true);
   let done = 0;
   setStatus({ kind: 'busy', text: `Retrying ${chunks.length} section(s)…`, pct: 0 });
+  const onNote = n => { if (n && my === state.runId) setStatus({ kind: 'busy', text: `Retrying sections · ${done} of ${chunks.length} · ${n}`, pct: done / chunks.length }); };
   await pool(chunks, 1, async ch => {
-    try { const j = await overpass(ch.query, ctl.signal); if (my === state.runId) ingest(j.elements || []); }
+    try { const j = await overpass(ch.query, ctl.signal, 0, onNote); if (my === state.runId) ingest(j.elements || []); }
     catch (e) { if (!ctl.signal.aborted) state.failed.push(ch); }
     done++;
     if (my === state.runId) setStatus({ kind: 'busy', text: `Retrying sections · ${done} of ${chunks.length}`, pct: done / chunks.length });
@@ -976,7 +1059,7 @@ function cancelRun() {
 }
 function finishStatus() {
   const n = state.finds.length;
-  if (state.failed.length) setStatus({ kind: 'warn', retryFailed: true, text: `${n.toLocaleString()} finds, but ${state.failed.length} section(s) couldn't be scanned — the map-data server is busy.` });
+  if (state.failed.length) setStatus({ kind: 'warn', retryFailed: true, text: `${n.toLocaleString()} finds, but ${state.failed.length} section(s) couldn't be scanned — the free map-data servers are busy. Retry asks again only for the missing sections.` });
   else setStatus({ kind: 'done', text: n ? `Found ${n.toLocaleString()} spots within ${state.radius} mi of the road.` : `Nothing turned up within ${state.radius} mi. Try widening the corridor.` });
 }
 async function enrichVisible(signal) {
@@ -1602,7 +1685,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
