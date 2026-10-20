@@ -1,40 +1,553 @@
 {
-  "_note": "Synthetic test data shaped like Troy, NY -> Lake Placid, NY. Route waypoints and place coordinates are approximate; tags for John Brown Farm, The Curious Otter, Valley View Ledge, Cliffside Coaster and Sentinel Range Wilderness are copied from a live Overpass answer (2026-10-19). Other places, including the gnome, exist only to exercise scoring rules.",
-  "geocode": {
-    "Troy, NY": [42.7284, -73.6918],
-    "Lake Placid, NY": [44.2795, -73.9799]
-  },
-  "waypoints": [
-    [42.7284, -73.6918], [42.7470, -73.7590], [42.8656, -73.7710], [43.0831, -73.7846],
-    [43.3095, -73.6440], [43.4262, -73.7123], [43.4967, -73.7762], [43.7300, -73.8170],
-    [43.9800, -73.7400], [44.2560, -73.7920], [44.2795, -73.9799]
+ "_note": "Synthetic test data shaped like Troy, NY -> Lake Placid, NY. Route waypoints and place coordinates are approximate; tags for John Brown Farm, The Curious Otter, Valley View Ledge, Cliffside Coaster and Sentinel Range Wilderness are copied from a live Overpass answer (2026-10-19). Other places, including the gnome, exist only to exercise scoring rules. The \"wiki\" list mimics Wikipedia geosearch results (Wikidata IDs are made up), including articles Byway should drop.",
+ "geocode": {
+  "Troy, NY": [
+   42.7284,
+   -73.6918
   ],
-  "elements": [
-    { "type": "node", "id": 1, "lat": 42.7120, "lon": -73.6980, "tags": { "name": "Burden Iron Works Museum", "tourism": "museum", "wikipedia": "en:Burden Iron Works" } },
-    { "type": "node", "id": 2, "lat": 42.7310, "lon": -73.6870, "tags": { "name": "Rensselaer County Historical Society", "tourism": "museum", "website": "https://example.org" } },
-    { "type": "node", "id": 3, "lat": 42.7500, "lon": -73.7650, "tags": { "name": "Scenic Overlook", "tourism": "viewpoint" } },
-    { "type": "node", "id": 4, "lat": 42.9500, "lon": -73.7800, "tags": { "name": "Saratoga Battle Historical Marker", "tourism": "attraction" } },
-    { "type": "node", "id": 5, "lat": 43.0817, "lon": -73.7746, "tags": { "name": "National Museum of Racing and Hall of Fame", "tourism": "museum", "wikipedia": "en:National Museum of Racing and Hall of Fame", "website": "https://example.org" } },
-    { "type": "way", "id": 6, "center": { "lat": 43.0595, "lon": -73.8034 }, "tags": { "name": "Saratoga Spa State Park", "leisure": "park", "wikipedia": "en:Saratoga Spa State Park" } },
-    { "type": "node", "id": 7, "lat": 43.1500, "lon": -73.7500, "tags": { "name": "Private Ruins", "historic": "ruins", "access": "private" } },
-    { "type": "node", "id": 8, "lat": 43.3097, "lon": -73.6489, "tags": { "name": "The Hyde Collection", "tourism": "museum", "wikipedia": "en:The Hyde Collection" } },
-    { "type": "way", "id": 9, "center": { "lat": 43.4189, "lon": -73.7108 }, "tags": { "name": "Fort William Henry", "historic": "fort", "wikipedia": "en:Fort William Henry" } },
-    { "type": "node", "id": 10, "lat": 43.4300, "lon": -73.7150, "tags": { "name": "World's Largest Garden Gnome", "tourism": "attraction" } },
-    { "type": "node", "id": 11, "lat": 43.3730, "lon": -73.6970, "tags": { "name": "Magic Forest", "tourism": "theme_park", "wikidata": "Q6731218" } },
-    { "type": "way", "id": 12, "center": { "lat": 43.5000, "lon": -73.7800 }, "tags": { "name": "Hackensack Covered Bridge", "bridge": "covered", "highway": "footway" } },
-    { "type": "node", "id": 13, "lat": 43.7530, "lon": -73.8240, "tags": { "name": "Natural Stone Bridge and Caves", "tourism": "attraction", "website": "https://example.org" } },
-    { "type": "node", "id": 14, "lat": 43.8500, "lon": -73.7800, "tags": { "name": "Mural", "tourism": "artwork", "artwork_type": "mural" } },
-    { "type": "node", "id": 15, "lat": 44.2500, "lon": -73.7400, "tags": { "name": "Keene Valley Lookout", "tourism": "viewpoint", "website": "https://example.org" } },
-    { "type": "node", "id": 16, "lat": 44.2600, "lon": -73.7950, "tags": { "name": "Hulls Falls", "waterway": "waterfall" } },
-    { "type": "relation", "id": 17, "center": { "lat": 44.2560, "lon": -73.9710 }, "tags": { "name": "John Brown Farm State Historic Site", "boundary": "protected_area", "heritage": "2", "heritage:operator": "nhl", "ref:nhl": "72000840", "protection_object": "heritage", "protection_title": "State Historic Site", "ownership": "state" } },
-    { "type": "node", "id": 18, "lat": 44.2850, "lon": -73.9850, "tags": { "name": "Lake Placid Olympic Museum", "tourism": "museum", "wikipedia": "en:Lake Placid Olympic Museum" } },
-    { "type": "node", "id": 19, "lat": 44.2860, "lon": -73.9830, "tags": { "name": "Lake Placid Olympic Museum", "tourism": "museum" } },
-    { "type": "way", "id": 20, "center": { "lat": 44.2800, "lon": -73.9780 }, "tags": { "name": "The Curious Otter", "tourism": "gallery", "building": "yes" } },
-    { "type": "node", "id": 21, "lat": 44.2610, "lon": -73.8100, "tags": { "name": "Valley View Ledge", "tourism": "viewpoint" } },
-    { "type": "node", "id": 22, "lat": 44.2160, "lon": -73.9220, "tags": { "name": "Cliffside Coaster", "tourism": "attraction", "attraction": "roller_coaster", "website": "https://example.org" } },
-    { "type": "relation", "id": 23, "center": { "lat": 44.2500, "lon": -73.8700 }, "tags": { "name": "Sentinel Range Wilderness", "boundary": "protected_area", "wikipedia": "en:Sentinel Range Wilderness" } },
-    { "type": "node", "id": 24, "lat": 44.2830, "lon": -73.9810, "tags": { "name": "Olympic Center", "tourism": "attraction", "wikipedia": "en:Olympic Center (Lake Placid)" } },
-    { "type": "node", "id": 25, "lat": 43.6000, "lon": -73.8000, "tags": { "tourism": "attraction" } },
-    { "type": "node", "id": 26, "lat": 43.0000, "lon": -73.3000, "tags": { "name": "Far Away Museum", "tourism": "museum", "wikipedia": "en:Nowhere" } }
+  "Lake Placid, NY": [
+   44.2795,
+   -73.9799
   ]
+ },
+ "waypoints": [
+  [
+   42.7284,
+   -73.6918
+  ],
+  [
+   42.747,
+   -73.759
+  ],
+  [
+   42.8656,
+   -73.771
+  ],
+  [
+   43.0831,
+   -73.7846
+  ],
+  [
+   43.3095,
+   -73.644
+  ],
+  [
+   43.4262,
+   -73.7123
+  ],
+  [
+   43.4967,
+   -73.7762
+  ],
+  [
+   43.73,
+   -73.817
+  ],
+  [
+   43.98,
+   -73.74
+  ],
+  [
+   44.256,
+   -73.792
+  ],
+  [
+   44.2795,
+   -73.9799
+  ]
+ ],
+ "elements": [
+  {
+   "type": "node",
+   "id": 1,
+   "lat": 42.712,
+   "lon": -73.698,
+   "tags": {
+    "name": "Burden Iron Works Museum",
+    "tourism": "museum",
+    "wikipedia": "en:Burden Iron Works"
+   }
+  },
+  {
+   "type": "node",
+   "id": 2,
+   "lat": 42.731,
+   "lon": -73.687,
+   "tags": {
+    "name": "Rensselaer County Historical Society",
+    "tourism": "museum",
+    "website": "https://example.org"
+   }
+  },
+  {
+   "type": "node",
+   "id": 3,
+   "lat": 42.75,
+   "lon": -73.765,
+   "tags": {
+    "name": "Scenic Overlook",
+    "tourism": "viewpoint"
+   }
+  },
+  {
+   "type": "node",
+   "id": 4,
+   "lat": 42.95,
+   "lon": -73.78,
+   "tags": {
+    "name": "Saratoga Battle Historical Marker",
+    "tourism": "attraction"
+   }
+  },
+  {
+   "type": "node",
+   "id": 5,
+   "lat": 43.0817,
+   "lon": -73.7746,
+   "tags": {
+    "name": "National Museum of Racing and Hall of Fame",
+    "tourism": "museum",
+    "wikipedia": "en:National Museum of Racing and Hall of Fame",
+    "website": "https://example.org"
+   }
+  },
+  {
+   "type": "way",
+   "id": 6,
+   "center": {
+    "lat": 43.0595,
+    "lon": -73.8034
+   },
+   "tags": {
+    "name": "Saratoga Spa State Park",
+    "leisure": "park",
+    "wikipedia": "en:Saratoga Spa State Park"
+   }
+  },
+  {
+   "type": "node",
+   "id": 7,
+   "lat": 43.15,
+   "lon": -73.75,
+   "tags": {
+    "name": "Private Ruins",
+    "historic": "ruins",
+    "access": "private"
+   }
+  },
+  {
+   "type": "node",
+   "id": 8,
+   "lat": 43.3097,
+   "lon": -73.6489,
+   "tags": {
+    "name": "The Hyde Collection",
+    "tourism": "museum",
+    "wikipedia": "en:The Hyde Collection"
+   }
+  },
+  {
+   "type": "way",
+   "id": 9,
+   "center": {
+    "lat": 43.4189,
+    "lon": -73.7108
+   },
+   "tags": {
+    "name": "Fort William Henry",
+    "historic": "fort",
+    "wikipedia": "en:Fort William Henry"
+   }
+  },
+  {
+   "type": "node",
+   "id": 10,
+   "lat": 43.43,
+   "lon": -73.715,
+   "tags": {
+    "name": "World's Largest Garden Gnome",
+    "tourism": "attraction"
+   }
+  },
+  {
+   "type": "node",
+   "id": 11,
+   "lat": 43.373,
+   "lon": -73.697,
+   "tags": {
+    "name": "Magic Forest",
+    "tourism": "theme_park",
+    "wikidata": "Q6731218"
+   }
+  },
+  {
+   "type": "way",
+   "id": 12,
+   "center": {
+    "lat": 43.5,
+    "lon": -73.78
+   },
+   "tags": {
+    "name": "Hackensack Covered Bridge",
+    "bridge": "covered",
+    "highway": "footway"
+   }
+  },
+  {
+   "type": "node",
+   "id": 13,
+   "lat": 43.753,
+   "lon": -73.824,
+   "tags": {
+    "name": "Natural Stone Bridge and Caves",
+    "tourism": "attraction",
+    "website": "https://example.org"
+   }
+  },
+  {
+   "type": "node",
+   "id": 14,
+   "lat": 43.85,
+   "lon": -73.78,
+   "tags": {
+    "name": "Mural",
+    "tourism": "artwork",
+    "artwork_type": "mural"
+   }
+  },
+  {
+   "type": "node",
+   "id": 15,
+   "lat": 44.25,
+   "lon": -73.74,
+   "tags": {
+    "name": "Keene Valley Lookout",
+    "tourism": "viewpoint",
+    "website": "https://example.org"
+   }
+  },
+  {
+   "type": "node",
+   "id": 16,
+   "lat": 44.26,
+   "lon": -73.795,
+   "tags": {
+    "name": "Hulls Falls",
+    "waterway": "waterfall"
+   }
+  },
+  {
+   "type": "relation",
+   "id": 17,
+   "center": {
+    "lat": 44.256,
+    "lon": -73.971
+   },
+   "tags": {
+    "name": "John Brown Farm State Historic Site",
+    "boundary": "protected_area",
+    "heritage": "2",
+    "heritage:operator": "nhl",
+    "ref:nhl": "72000840",
+    "protection_object": "heritage",
+    "protection_title": "State Historic Site",
+    "ownership": "state"
+   }
+  },
+  {
+   "type": "node",
+   "id": 18,
+   "lat": 44.285,
+   "lon": -73.985,
+   "tags": {
+    "name": "Lake Placid Olympic Museum",
+    "tourism": "museum",
+    "wikipedia": "en:Lake Placid Olympic Museum",
+    "wikidata": "Q7777"
+   }
+  },
+  {
+   "type": "node",
+   "id": 19,
+   "lat": 44.286,
+   "lon": -73.983,
+   "tags": {
+    "name": "Lake Placid Olympic Museum",
+    "tourism": "museum"
+   }
+  },
+  {
+   "type": "way",
+   "id": 20,
+   "center": {
+    "lat": 44.28,
+    "lon": -73.978
+   },
+   "tags": {
+    "name": "The Curious Otter",
+    "tourism": "gallery",
+    "building": "yes"
+   }
+  },
+  {
+   "type": "node",
+   "id": 21,
+   "lat": 44.261,
+   "lon": -73.81,
+   "tags": {
+    "name": "Valley View Ledge",
+    "tourism": "viewpoint"
+   }
+  },
+  {
+   "type": "node",
+   "id": 22,
+   "lat": 44.216,
+   "lon": -73.922,
+   "tags": {
+    "name": "Cliffside Coaster",
+    "tourism": "attraction",
+    "attraction": "roller_coaster",
+    "website": "https://example.org"
+   }
+  },
+  {
+   "type": "relation",
+   "id": 23,
+   "center": {
+    "lat": 44.25,
+    "lon": -73.87
+   },
+   "tags": {
+    "name": "Sentinel Range Wilderness",
+    "boundary": "protected_area",
+    "wikipedia": "en:Sentinel Range Wilderness"
+   }
+  },
+  {
+   "type": "node",
+   "id": 24,
+   "lat": 44.283,
+   "lon": -73.981,
+   "tags": {
+    "name": "Olympic Center",
+    "tourism": "attraction",
+    "wikipedia": "en:Olympic Center (Lake Placid)"
+   }
+  },
+  {
+   "type": "node",
+   "id": 25,
+   "lat": 43.6,
+   "lon": -73.8,
+   "tags": {
+    "tourism": "attraction"
+   }
+  },
+  {
+   "type": "node",
+   "id": 26,
+   "lat": 43.0,
+   "lon": -73.3,
+   "tags": {
+    "name": "Far Away Museum",
+    "tourism": "museum",
+    "wikipedia": "en:Nowhere"
+   }
+  }
+ ],
+ "wiki": [
+  {
+   "type": "wp",
+   "id": 101,
+   "lat": 43.419,
+   "lon": -73.7105,
+   "tags": {
+    "name": "Fort William Henry",
+    "wikipedia": "en:Fort William Henry",
+    "wpdesc": "Fort in Lake George, New York",
+    "wikidata": "Q1440001"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 102,
+   "lat": 44.2851,
+   "lon": -73.9851,
+   "tags": {
+    "name": "Lake Placid Winter Olympic Museum",
+    "wikipedia": "en:Lake Placid Winter Olympic Museum",
+    "wpdesc": "Museum in Lake Placid, New York",
+    "wikidata": "Q7777"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 103,
+   "lat": 43.0796,
+   "lon": -73.7863,
+   "tags": {
+    "name": "Canfield Casino and Congress Park",
+    "wikipedia": "en:Canfield Casino and Congress Park",
+    "wpdesc": "Historic site in Saratoga Springs, New York",
+    "wikidata": "Q5032001"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 104,
+   "lat": 43.083,
+   "lon": -73.785,
+   "tags": {
+    "name": "United States Post Office (Saratoga Springs, New York)",
+    "wikipedia": "en:United States Post Office (Saratoga Springs, New York)",
+    "wpdesc": "Post office building in Saratoga Springs, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 105,
+   "lat": 43.07,
+   "lon": -73.79,
+   "tags": {
+    "name": "Saratoga Springs High School",
+    "wikipedia": "en:Saratoga Springs High School",
+    "wpdesc": "Public high school in Saratoga Springs, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 106,
+   "lat": 43.41,
+   "lon": -73.71,
+   "tags": {
+    "name": "Battle of Lake George",
+    "wikipedia": "en:Battle of Lake George",
+    "wpdesc": "1755 battle of the French and Indian War"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 107,
+   "lat": 43.0831,
+   "lon": -73.7846,
+   "tags": {
+    "name": "Saratoga Springs, New York",
+    "wikipedia": "en:Saratoga Springs, New York",
+    "wpdesc": "City in New York, United States"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 108,
+   "lat": 43.425,
+   "lon": -73.712,
+   "tags": {
+    "name": "Lake George station",
+    "wikipedia": "en:Lake George station",
+    "wpdesc": "Former railroad station in Lake George, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 109,
+   "lat": 43.0717,
+   "lon": -73.771,
+   "tags": {
+    "name": "Saratoga Race Course",
+    "wikipedia": "en:Saratoga Race Course",
+    "wpdesc": "Thoroughbred horse racing venue in Saratoga Springs, New York",
+    "wikidata": "Q2232001"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 110,
+   "lat": 44.2795,
+   "lon": -73.9799,
+   "tags": {
+    "name": "1932 Winter Olympics",
+    "wikipedia": "en:1932 Winter Olympics",
+    "wpdesc": "Multi-sport event in Lake Placid, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 111,
+   "lat": 43.081,
+   "lon": -73.786,
+   "tags": {
+    "name": "Grand Union Hotel (Saratoga Springs, New York)",
+    "wikipedia": "en:Grand Union Hotel (Saratoga Springs, New York)",
+    "wpdesc": "Demolished hotel in Saratoga Springs, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 112,
+   "lat": 44.219,
+   "lon": -73.86,
+   "tags": {
+    "name": "Cascade Mountain (New York)",
+    "wikipedia": "en:Cascade Mountain (New York)",
+    "wpdesc": "Mountain in Essex County, New York",
+    "wikidata": "Q5048001"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 113,
+   "lat": 44.265,
+   "lon": -73.963,
+   "tags": {
+    "name": "Lake Placid Olympic Ski Jumping Complex",
+    "wikipedia": "en:Lake Placid Olympic Ski Jumping Complex",
+    "wpdesc": "Ski jumping venue in Lake Placid, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 114,
+   "lat": 43.7531,
+   "lon": -73.8241,
+   "tags": {
+    "name": "Natural Stone Bridge and Caves",
+    "wikipedia": "en:Natural Stone Bridge and Caves",
+    "wpdesc": ""
+   }
+  },
+  {
+   "type": "wp",
+   "id": 115,
+   "lat": 43.4,
+   "lon": -73.7,
+   "tags": {
+    "name": "Museum Village (New York)",
+    "wikipedia": "en:Museum Village (New York)",
+    "wpdesc": "Hamlet in Warren County, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 116,
+   "lat": 44.2601,
+   "lon": -73.7951,
+   "tags": {
+    "name": "Hulls Falls",
+    "wikipedia": "en:Hulls Falls",
+    "wpdesc": "Waterfall in Keene, New York"
+   }
+  },
+  {
+   "type": "wp",
+   "id": 117,
+   "lat": 43.0,
+   "lon": -73.2,
+   "tags": {
+    "name": "Far Away Lighthouse",
+    "wikipedia": "en:Far Away Lighthouse",
+    "wpdesc": "Lighthouse in Vermont"
+   }
+  }
+ ]
 }

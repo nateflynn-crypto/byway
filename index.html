@@ -310,6 +310,11 @@ const CFG = {
   cacheDays: 7,           // Overpass answers are reused for a week (memory + localStorage)
   cacheMaxChars: 3500000, // localStorage budget for cached answers (~3.5 MB of the usual 5 MB)
   chunkMi: 40,
+  wikiApi: 'https://en.wikipedia.org/w/api.php',
+  wikiRadiusM: 10000,    // Wikipedia geosearch maximum
+  wikiLimit: 150,        // articles per lookup point
+  wikiConcurrency: 3,
+  wikiMs: 12000,
   maxFinds: 100,         // most finds shown per route (list + map), spread along the road
   shortlistPerDay: 10,   // shortlist size: about this many per day of driving…
   dayMi: 400,            // …where a day is about this many miles
@@ -803,6 +808,143 @@ function logScan(e) {
 }
 const hostName = u => { try { return new URL(u).hostname; } catch { return u; } };
 
+/* ---- Wikipedia pass ----
+   Wikipedia's "articles near a point" search is fast and dependable, so it runs first and fills the
+   list within seconds. Overpass (OpenStreetMap) then adds the smaller spots when its servers answer. */
+
+// Lookup points along the route whose 10 km circles cover the whole corridor. Points go in sets
+// across the road (one per parallel line, so wide corridors are covered too), spaced along it as
+// far apart as coverage allows. Curves and corners can open gaps, so the corridor is then walked on
+// a fine grid and a set is added wherever a spot isn't yet within reach of a lookup.
+function wikiPoints(route, R) {
+  const rho = CFG.wikiRadiusM / MI * 0.94, w = R + 0.6;
+  let lines = 1, best = Infinity;
+  for (let n = Math.ceil(w / rho * 1.001); n <= 6; n++) { const h = w / n; if (h >= rho) continue; const cost = n / Math.sqrt(rho * rho - h * h); if (cost < best) { best = cost; lines = n; } }
+  const h = w / lines, step = 2 * Math.sqrt(rho * rho - h * h);
+  const pts = route.pts, cum = cumulative(pts), total = cum[cum.length - 1];
+  const at = d => { // position on the route at distance d, with the unit normal (east, north) in miles
+    let lo = 1, hi = pts.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < d) lo = mid + 1; else hi = mid; }
+    const a = pts[lo - 1], b = pts[lo], seg = cum[lo] - cum[lo - 1] || 1, t = clamp((d - cum[lo - 1]) / seg, 0, 1);
+    const lat = a[0] + (b[0] - a[0]) * t, lon = a[1] + (b[1] - a[1]) * t, kx = Math.cos(rad(lat)) * MI_PER_DEG;
+    const dx = (b[1] - a[1]) * kx, dy = (b[0] - a[0]) * MI_PER_DEG, len = Math.hypot(dx, dy) || 1;
+    return { lat, lon, kx, nx: -dy / len, ny: dx / len };
+  };
+  const shift = (p, off) => ({ lat: p.lat + (p.ny * off) / MI_PER_DEG, lon: p.lon + (p.nx * off) / p.kx });
+  const out = [], recent = [];
+  const addSet = d => { const p = at(clamp(d, 0, total)); for (let k = 0; k < lines; k++) { const q = shift(p, -w + h * (2 * k + 1)); out.push(q); recent.push(q); } if (recent.length > 8 * lines) recent.splice(0, recent.length - 8 * lines); };
+  const covered = q => { const kx = Math.cos(rad(q.lat)) * MI_PER_DEG; return recent.some(c => Math.hypot((c.lat - q.lat) * MI_PER_DEG, (c.lon - q.lon) * kx) <= rho); };
+  const lat = []; for (let x = -w; x <= w + 1e-9; x += w / Math.max(1, Math.ceil(w / 0.5))) lat.push(x);
+  for (let d = 0; ; d = Math.min(d + 0.4, total)) {
+    const p = at(d), probes = lat.map(x => shift(p, x));
+    if (!probes.every(covered)) {
+      addSet(d + step * 0.48);                 // the usual case: one set covers the next stretch
+      if (!probes.every(covered)) {            // around a corner: cover just the lines still uncovered here
+        for (let k = 0; k < lines; k++) {
+          const lo = -w + 2 * h * k - 1e-9, hi = lo + 2 * h + 2e-9;
+          if (probes.some((q, i) => lat[i] >= lo && lat[i] <= hi && !covered(q))) { const q = shift(p, -w + h * (2 * k + 1)); out.push(q); recent.push(q); }
+        }
+      }
+    }
+    if (d >= total) break;
+  }
+  return out;
+}
+function wikiLookupURL(pt) {
+  return CFG.wikiApi + '?' + new URLSearchParams({
+    action: 'query', format: 'json', formatversion: '2', origin: '*',
+    generator: 'geosearch', ggscoord: `${pt.lat.toFixed(4)}|${pt.lon.toFixed(4)}`, ggsradius: String(CFG.wikiRadiusM),
+    ggslimit: String(CFG.wikiLimit), ggsnamespace: '0',
+    prop: 'coordinates|pageprops|description', ppprop: 'wikibase_item', colimit: 'max' });
+}
+async function wikiNear(pt, signal) {
+  const url = wikiLookupURL(pt);
+  const hit = cacheGet(url);
+  if (hit) return { ...hit, cached: true };
+  const j = await fetchJSON(url, {}, CFG.wikiMs, signal);
+  const elements = ((j.query && j.query.pages) || []).filter(p => p.coordinates && p.coordinates[0]).map(p => ({
+    type: 'wp', id: p.pageid, lat: p.coordinates[0].lat, lon: p.coordinates[0].lon,
+    tags: { name: p.title, wikipedia: 'en:' + p.title, wikidata: (p.pageprops && p.pageprops.wikibase_item) || undefined, wpdesc: p.description || '' } }));
+  const out = { elements };
+  cachePut(url, out);
+  return out;
+}
+
+// Wikipedia article → pseudo OpenStreetMap tags, so classify() scores both sources the same way.
+// Rules run in order on the article's short description; the first match wins. null means "not a
+// place worth a detour" (towns, schools, events, roads, businesses…). Anything unmatched is dropped.
+const WP = (tags, adj = 0) => ({ tags, adj });
+const WP_STRONG = [ // also safe on the title alone, for articles without a description
+  [/\bmuseum\b/, WP({ tourism: 'museum' })],
+  [/\bcovered bridge\b/, WP({ bridge: 'covered' })],
+  [/\blighthouse\b/, WP({ man_made: 'lighthouse' })],
+  [/\b(battlefield|battleground)\b/, WP({ historic: 'battlefield' })],
+  [/\bwaterfalls?\b|\bfalls$/, WP({ natural: 'waterfall' })],
+  [/\b(state|national|provincial) park\b/, WP({ leisure: 'park' })],
+];
+const WP_RULES = [
+  [/\b(art gallery|gallery)\b/, WP({ tourism: 'gallery', website: 'wikipedia' })],
+  [/\b(zoo|aquarium|wildlife park|safari park)\b/, WP({ tourism: 'zoo' })],
+  [/\b(amusement park|theme park|water park)\b/, WP({ tourism: 'theme_park' })],
+  [/\b(roadside attraction|tourist attraction)\b/, WP({ tourism: 'attraction' })],
+  [/\b(fort|fortress|castle|stockade|redoubt|blockhouse)\b/, WP({ historic: 'fort' })],
+  [/\b(caves?|cavern)\b/, WP({ natural: 'cave_entrance' })],
+  [/\b(gorge|chasm|canyon|natural arch|natural bridge|hot springs?|geyser|rock formation|glacial erratic)\b/, WP({ natural: 'gorge' })],
+  [/\b(windmill|watermill|gristmill|grist mill)\b/, WP({ man_made: 'watermill' })],
+  [/\bobservatory\b/, WP({ man_made: 'observatory' })],
+  [/\b(state historic site|national historic site|historic site|historical park|national monument|national memorial|historic landmark|heritage site|living history)\b/, WP({ boundary: 'protected_area', protection_title: 'Historic Site' })],
+  [/\b(historic ship|steamboat|steamship|paddle steamer|schooner|tour boat|riverboat|submarine|warship|battleship|locomotive|aircraft)\b/, WP({ historic: 'ship' })],
+  [/\b(shipwreck|wreck)\b/, WP({ historic: 'wreck' })],
+  [/\b(ruins?|ruined)\b/, WP({ historic: 'ruins' })],
+  [/\bhistoric district\b/, WP({ historic: 'building' }, -1.5)],
+  [/\bschoolhouse\b/, WP({ historic: 'building' }, -1.5)],
+  // not destinations
+  [/\b(battle|siege|skirmish|massacre|raid|campaign|expedition|treaty|election|riot|fire|flood|tornado|hurricane|earthquake|disaster|accident|crash|derailment|shooting|murder|olympics|olympic games|championships?|tournament|festival|event|season)\b/, null],
+  [/\b(census-designated place|town|village|city|hamlet|county|borough|township|neighbou?rhood|community|settlement|municipality|suburb|unincorporated|ghost town)\b/, null],
+  [/\b(school|college|university|academy|institute|seminary|campus)\b/, null],
+  [/\b(post office|library|courthouse|court house|town hall|city hall|county building|government|agency|authority|department|office|bank|hospital|clinic|prison|jail|correctional|fire station|police|armory)\b/, null],
+  [/\b(station|airport|airfield|heliport|subway|metro|interchange)\b/, null],
+  [/\b(highway|road|route|street|avenue|interstate|parkway|expressway|turnpike|boulevard|trail|railroad|railway|rail line)\b/, null],
+  [/\b(company|corporation|manufacturer|brand|store|shop|shopping|mall|restaurant|diner|bar|brewery|winery|hotel|motel|inn|apartments?|condominium|office building|skyscraper)\b/, null],
+  [/\b(organization|organisation|association|society|club|team|league|newspaper|magazine|radio|television|website|band|album|song|film|novel)\b/, null],
+  [/\b(industrial|office|business|technology|research|trailer|mobile home|skate|dog) park\b/, null],
+  [/\b(reservoir|dam|power station|power plant|substation|landfill|quarry|wastewater)\b/, null],
+  [/\b(politician|businessman|businesswoman|actor|actress|singer|writer|author|painter|architect|engineer|soldier|family|people)\b/, null],
+  // places, weaker
+  [/\b(monument|memorial|statue|sculpture|obelisk)\b/, WP({ tourism: 'artwork', artwork_type: 'statue' })],
+  [/\bmural\b/, WP({ tourism: 'artwork', artwork_type: 'mural' })],
+  [/\b(ski jump(ing)?|bobsled|luge|olympic venue|race ?course|racetrack|speedway|raceway|racing venue)\b/, WP({ tourism: 'attraction' }, -0.5)],
+  [/\b(stadium|arena|rink|sports venue|ballpark)\b/, WP({ tourism: 'attraction' }, -2)],
+  [/\b(ski area|ski resort|mountain resort)\b/, WP({ tourism: 'attraction' }, -1.5)],
+  [/\b(theat(er|re)|opera house|music hall|concert hall|casino|carousel)\b/, WP({ tourism: 'attraction' }, -1.5)],
+  [/\b(botanical garden|arboretum|gardens?)\b/, WP({ leisure: 'garden' })],
+  [/\bpark\b/, WP({ leisure: 'park' })],
+  [/\b(wilderness|forest preserve|nature preserve|nature reserve|wildlife refuge|wildlife management area|national forest|state forest|preserve|sanctuary)\b/, WP({ boundary: 'protected_area' })],
+  [/\b(fire lookout|lookout tower|observation tower|tower)\b/, WP({ man_made: 'tower' }, -1.5)],
+  [/\b(church|cathedral|chapel|synagogue|temple|mosque|meeting ?house|abbey|monastery|shrine|basilica)\b/, WP({ historic: 'church' }, -2)],
+  [/\b(house|mansion|homestead|farmhouse|cabin|estate|villa|plantation|farm|barn)\b/, WP({ historic: 'house' }, -2)],
+  [/\b(cemetery|burial ground|graveyard|grave|tomb|mausoleum)\b/, WP({ historic: 'tomb' }, -2.5)],
+  [/\b(lake|pond|river|creek|brook|stream|mountain|peak|summit|hill|island|bay|beach|cliff|ledge|bluff|valley|notch|gap|pass|swamp|marsh|bog|spring)\b/, WP({ natural: 'feature' }, -2.5)],
+  [/\b(bridge|viaduct|aqueduct|tunnel|canal|lock)\b/, WP({ man_made: 'bridge' }, -2)],
+  [/\b(historic building|building|block|hall|factory|mill)\b/, WP({ historic: 'building' }, -2.5)],
+];
+function wikiTags(wt) {
+  const desc = (wt.wpdesc || '').toLowerCase(), title = (wt.name || '').toLowerCase();
+  let m = null;
+  if (desc) {
+    // Short descriptions read "<type> in <place>"; match the type part only, so "Mountain in Essex
+    // County" isn't mistaken for a county and "Museum in Troy" isn't mistaken for a town.
+    const head = desc.split(/\s+(?:in|of|on|at|near|along|by|within|across|between|for|from|located)\s+|[,;(]/)[0].trim() || desc;
+    for (const [re, r] of WP_STRONG) if (re.test(head)) { m = r; break; }
+    if (!m) for (const [re, r] of WP_RULES) if (re.test(head)) { m = r === null ? 'drop' : r; break; }
+    if (!m) for (const [re, r] of WP_STRONG) if (re.test(title)) { m = r; break; } // unrecognised type: trust a telling title
+  } else {
+    for (const [re, r] of WP_STRONG) if (re.test(title)) { m = r; break; }
+  }
+  if (!m || m === 'drop') return null;
+  return { tags: { ...m.tags, name: wt.name, wikipedia: wt.wikipedia, wikidata: wt.wikidata, description: wt.wpdesc || undefined }, adj: m.adj };
+}
+
 /* ---- Overpass: answer cache ----
    Answers are keyed by a hash of the exact query (route section + corridor width), so a retry,
    a reload or a repeat of the same drive reuses what already came back instead of asking again. */
@@ -882,10 +1024,13 @@ async function overpass(query, signal, offset = 0, onNote, sec) {
       }, CFG.overpassMs, signal);
       // Overpass reports a query that ran out of time or memory as HTTP 200 with a "remark".
       if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) { const e = new Error(j.remark); e.remark = true; throw e; }
+      // A busy server can also answer "nothing here" just as the time runs out. Treat that as a timeout.
+      const took = Date.now() - t0, limitMs = 0.8 * Math.min((+(/\[timeout:(\d+)\]/.exec(query) || [])[1] || 180) * 1000, CFG.overpassMs);
+      if (!(j.elements || []).length && took > limitMs) { const e = new Error('empty answer at the time limit'); e.remark = true; throw e; }
       hostState.delete(url);
       if (onNote) onNote(null);
-      logScan({ kind: 'section', ...tag, attempt: attempt + 1, host: hostName(url), outcome: 'ok', s: secs(Date.now() - t0), els: (j.elements || []).length });
-      cachePut(query, j);
+      logScan({ kind: 'section', ...tag, attempt: attempt + 1, host: hostName(url), outcome: 'ok', s: secs(took), els: (j.elements || []).length });
+      if ((j.elements || []).length || took < 0.3 * limitMs) cachePut(query, j); // never save a slow empty answer
       return j;
     } catch (e) {
       if (signal && signal.aborted) throw e;
@@ -972,7 +1117,7 @@ async function enrich(items, signal) {
 /* ================= state ================= */
 const state = {
   stops: [], radius: 5, queryRadius: 0, lens: 'all', view: 'shortlist', sort: 'route',
-  route: null, raw: new Map(), finds: [], visible: [], lensTotal: 0, shortlist: [], shortNum: new Map(),
+  route: null, raw: new Map(), wikiIdx: new Map(), failedWiki: [], sectionsTotal: 0, finds: [], visible: [], lensTotal: 0, shortlist: [], shortNum: new Map(),
   picks: new Set(), selectedId: null, allLimit: 150, runId: 0, ctl: null, failed: [], busy: false,
   navFromHere: store.get('navFromHere', true), qrPart: null,
 };
@@ -988,13 +1133,38 @@ const markerById = new Map();
 const isDark = () => window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
 
 /* ================= pipeline ================= */
+// Wikipedia and OpenStreetMap often describe the same place. Keys are Wikidata IDs and English
+// Wikipedia titles; an OpenStreetMap entry wins because its tags say more about the place.
+function wikiKeys(t) {
+  const keys = [];
+  if (/^Q\d+$/.test(t.wikidata || '')) keys.push(t.wikidata);
+  const w = wikiRef(t); if (w && w.lang === 'en') keys.push('t:' + w.title.replace(/_/g, ' ').toLowerCase());
+  return keys;
+}
 function ingest(els) {
   const R = state.queryRadius + 0.5;
   for (const el of els) {
     const id = `${el.type}/${el.id}`;
     if (state.raw.has(id)) continue;
-    const t = el.tags || {};
-    const name = (/[a-z]/i.test(t.name || '') ? t.name : (t['name:en'] || t.name || '')).trim();
+    const isWP = el.type === 'wp';
+    let t = el.tags || {}, adj = 0;
+    const keys = wikiKeys(t);
+    if (isWP) {
+      if (keys.some(k => state.wikiIdx.has(k))) continue; // already known, from either source
+      const m = wikiTags(t); if (!m) continue;
+      t = m.tags; adj = m.adj || 0;
+    } else {
+      for (const k of keys) {
+        const other = state.wikiIdx.get(k);
+        if (other && other.startsWith('wp/')) { // replace the Wikipedia copy, keeping its star if it had one
+          state.raw.delete(other);
+          if (state.picks.delete(other)) state.picks.add(id);
+          if (state.selectedId === other) state.selectedId = id;
+        }
+      }
+    }
+    let name = (/[a-z]/i.test(t.name || '') ? t.name : (t['name:en'] || t.name || '')).trim();
+    if (isWP) name = name.replace(/\s*\([^)]*\)$/, ''); // drop disambiguation: Grand Union Hotel (Saratoga Springs, New York)
     if (!name) continue;
     const lat = el.lat != null ? el.lat : el.center && el.center.lat;
     const lon = el.lon != null ? el.lon : el.center && el.center.lon;
@@ -1003,9 +1173,10 @@ function ingest(els) {
     if (!p) continue;
     const { cat, base } = classify(t, name);
     state.raw.set(id, {
-      id, type: el.type, osmId: el.id, name, lat, lon, tags: t, cat, base, off: p.off, along: p.along, score: 0,
+      id, type: el.type, osmId: isWP ? null : el.id, src: isWP ? 'wikipedia' : 'osm', name, lat, lon, tags: t, cat, base: base + adj, off: p.off, along: p.along, score: 0,
       nkey: normName(name), wiki: wikiRef(t), wd: /^Q\d+$/.test(t.wikidata || '') ? t.wikidata : null, info: undefined,
     });
+    for (const k of keys) state.wikiIdx.set(k, id);
   }
 }
 function reproject() {
@@ -1067,16 +1238,37 @@ async function run(mode = 'full') {
       return;
     }
 
-    state.raw = new Map(); state.picks.clear(); state.selectedId = null; state.view = 'shortlist';
-    state.allLimit = 150; state.failed = []; state.queryRadius = state.radius;
+    state.raw = new Map(); state.wikiIdx = new Map(); state.picks.clear(); state.selectedId = null; state.view = 'shortlist';
+    state.allLimit = 150; state.failed = []; state.failedWiki = []; state.queryRadius = state.radius;
     recompute(); render();
+
+    // Pass 1: Wikipedia — quick and dependable; finds the notable places.
+    const wpts = wikiPoints(route, state.radius);
     const chunks = makeChunks(route, state.radius);
-    logScan({ kind: 'sections', n: chunks.length, chunkMi: CFG.chunkMi, concurrency: CFG.concurrency });
-    let done = 0, note = null;
-    const progress = () => setStatus({ kind: 'busy', text: `Scouting the corridor · section ${Math.min(done + 1, chunks.length)} of ${chunks.length} · ${state.finds.length.toLocaleString()} finds` + (note ? ` · ${note}` : ''), pct: done / chunks.length });
+    state.sectionsTotal = chunks.length;
+    let wdone = 0, done = 0, note = null, phase = 'wiki';
+    const progress = () => setStatus(phase === 'wiki'
+      ? { kind: 'busy', text: `Looking up landmarks along the route · ${wdone} of ${wpts.length} · ${state.finds.length.toLocaleString()} finds`, pct: 0.3 * wdone / wpts.length }
+      : { kind: 'busy', text: `${state.finds.length.toLocaleString()} finds · checking OpenStreetMap for smaller spots · section ${Math.min(done + 1, chunks.length)} of ${chunks.length}` + (note ? ` · ${note}` : ''), pct: 0.3 + 0.7 * done / chunks.length });
     const onNote = n => { if (n === note || stale()) return; note = n; progress(); };
-    progress();
     const tick = throttle(() => { if (!stale()) { recompute(); render(); progress(); } }, 450);
+    progress();
+    tStep = performance.now();
+    let wcached = 0;
+    await pool(wpts, CFG.wikiConcurrency, async pt => {
+      try { const j = await wikiNear(pt, sig); if (stale()) return; if (j.cached) wcached++; ingest(j.elements); }
+      catch (e) { if (sig.aborted) return; state.failedWiki.push(pt); }
+      wdone++; tick();
+    });
+    if (stale()) return;
+    logScan({ kind: 'wikipedia', points: wpts.length, cached: wcached, failed: state.failedWiki.length, finds: [...state.raw.values()].filter(f => f.src === 'wikipedia').length, s: secs(performance.now() - tStep) });
+    recompute(); render();
+    enrichVisible(sig); // descriptions and photos for the first results while OpenStreetMap is checked
+
+    // Pass 2: OpenStreetMap via Overpass — adds waterfalls, viewpoints and roadside oddities when its servers answer.
+    phase = 'osm';
+    logScan({ kind: 'sections', n: chunks.length, chunkMi: CFG.chunkMi, concurrency: CFG.concurrency });
+    progress();
     await pool(chunks, CFG.concurrency, async (ch, k) => {
       try { const j = await overpass(ch.query, sig, k % 2, onNote, ch); if (stale()) return; ingest(j.elements || []); }
       catch (e) { if (sig.aborted) return; console.warn('section failed', e); state.failed.push(ch); }
@@ -1097,14 +1289,20 @@ async function run(mode = 'full') {
   }
 }
 async function retryFailed() {
-  const chunks = state.failed; if (!chunks.length || !state.route) return;
-  state.failed = [];
+  const chunks = state.failed, wpts = state.failedWiki;
+  if ((!chunks.length && !wpts.length) || !state.route) return;
+  state.failed = []; state.failedWiki = [];
   if (state.ctl) state.ctl.abort();
   const ctl = state.ctl = new AbortController(), my = ++state.runId;
   setBusy(true);
   let done = 0;
-  setStatus({ kind: 'busy', text: `Retrying ${chunks.length} section(s)…`, pct: 0 });
-  logScan({ kind: 'retry', n: chunks.length });
+  setStatus({ kind: 'busy', text: `Retrying ${chunks.length + wpts.length} lookup(s)…`, pct: 0 });
+  logScan({ kind: 'retry', n: chunks.length, wiki: wpts.length });
+  await pool(wpts, CFG.wikiConcurrency, async pt => {
+    try { const j = await wikiNear(pt, ctl.signal); if (my === state.runId) ingest(j.elements); }
+    catch (e) { if (!ctl.signal.aborted) state.failedWiki.push(pt); }
+  });
+  if (my === state.runId) { recompute(); render(); }
   const onNote = n => { if (n && my === state.runId) setStatus({ kind: 'busy', text: `Retrying sections · ${done} of ${chunks.length} · ${n}`, pct: done / chunks.length }); };
   await pool(chunks, 1, async ch => {
     try { const j = await overpass(ch.query, ctl.signal, 0, onNote, ch); if (my === state.runId) ingest(j.elements || []); }
@@ -1127,7 +1325,13 @@ function cancelRun() {
 }
 function finishStatus() {
   const n = state.finds.length;
-  if (state.failed.length) setStatus({ kind: 'warn', retryFailed: true, text: `${n.toLocaleString()} finds, but ${state.failed.length} section(s) couldn't be scanned — the free map-data servers are busy. Retry asks again only for the missing sections.` });
+  const f = state.failed.length, fw = state.failedWiki.length;
+  if (f || fw) {
+    const parts = [];
+    if (f) parts.push(`OpenStreetMap’s servers are busy, so smaller spots (waterfalls, viewpoints, roadside oddities) may be missing along ${f === state.sectionsTotal ? 'the whole route' : `${f} of ${state.sectionsTotal} stretches`}`);
+    if (fw) parts.push(`${fw} Wikipedia lookup${fw > 1 ? 's' : ''} didn’t answer`);
+    setStatus({ kind: 'warn', retryFailed: true, text: `${n ? `Found ${n.toLocaleString()} spots` : 'No spots yet'}. ${parts.join('; ')}. Retry asks again for just those.` });
+  }
   else setStatus({ kind: 'done', text: n ? `Found ${n.toLocaleString()} spots within ${state.radius} mi of the road.` : `Nothing turned up within ${state.radius} mi. Try widening the corridor.` });
 }
 async function enrichVisible(signal) {
@@ -1297,7 +1501,7 @@ function linksHTML(f) {
   out.push(`<a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}" target="_blank" rel="noopener">Google Maps ↗</a>`);
   if (f.wiki) out.push(`<a href="${esc(wikiURL(f.wiki))}" target="_blank" rel="noopener">Wikipedia ↗</a>`);
   const site = website(t); if (site) out.push(`<a href="${esc(site)}" target="_blank" rel="noopener">Website ↗</a>`);
-  out.push(`<a href="https://www.openstreetmap.org/${f.type}/${f.osmId}" target="_blank" rel="noopener">OSM ↗</a>`);
+  if (f.src !== 'wikipedia') out.push(`<a href="https://www.openstreetmap.org/${f.type}/${f.osmId}" target="_blank" rel="noopener">OSM ↗</a>`);
   return out.join('');
 }
 function detailsHTML(f) {
@@ -1560,10 +1764,15 @@ function exportFixture() {
     const j = cacheGet(ch.query);
     for (const e of (j && j.elements) || []) els.set(`${e.type}/${e.id}`, e);
   }
+  const wiki = new Map();
+  for (const pt of wikiPoints(r, state.queryRadius || state.radius)) {
+    const j = cacheGet(wikiLookupURL(pt));
+    for (const e of (j && j.elements) || []) wiki.set(e.id, e);
+  }
   const act = activeStops().filter(s => s.coord);
   return { _note: `Captured from a live Byway run on ${new Date().toISOString().slice(0, 10)} (corridor ${state.queryRadius} mi).`,
     geocode: Object.fromEntries(act.map(s => [s.text, [+s.coord.lat.toFixed(5), +s.coord.lon.toFixed(5)]])),
-    waypoints: simplify(r.pts, 0.1).map(p => [+p[0].toFixed(5), +p[1].toFixed(5)]), elements: [...els.values()] };
+    waypoints: simplify(r.pts, 0.1).map(p => [+p[0].toFixed(5), +p[1].toFixed(5)]), elements: [...els.values()], wiki: [...wiki.values()] };
 }
 function renderDebug() {
   const el = $('#dbg'); if (!el || !DEBUG) return;
@@ -1802,7 +2011,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, scanLog, scanLogJSON, exportFixture };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
