@@ -219,6 +219,13 @@ footer p{margin:6px 0}
 #dbg td.w{white-space:normal}
 #dbg tr.fail td{color:var(--accent)}
 #dbg tr.cache td{color:var(--muted)}
+.guides{margin:10px 0 4px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px 12px}
+.guides summary{cursor:pointer;font-weight:600;font-size:14px}
+.guides ol{list-style:none;margin:8px 0 2px;padding:0;display:grid;gap:6px}
+.guides li{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:13.5px}
+.guides li .mi{color:var(--muted);font-size:12px;min-width:52px}
+.guides li a{font-size:12.5px}
+.guides .fine{margin:6px 0 0}
 </style>
 </head>
 <body>
@@ -1248,7 +1255,7 @@ async function enrich(items, signal) {
 const state = {
   stops: [], radius: 5, queryRadius: 0, lens: 'all', view: 'shortlist', sort: 'route',
   route: null, raw: new Map(), wikiIdx: new Map(), failedWiki: [], sectionsTotal: 0, finds: [], visible: [], lensTotal: 0, shortlist: [], shortNum: new Map(),
-  picks: new Set(), selectedId: null, allLimit: 150, runId: 0, ctl: null, failed: [], busy: false, bg: false,
+  picks: new Set(), guidesOpen: false, selectedId: null, allLimit: 150, runId: 0, ctl: null, failed: [], busy: false, bg: false,
   navFromHere: store.get('navFromHere', true), qrPart: null,
 };
 let stopSeq = 0;
@@ -1370,7 +1377,7 @@ async function run(mode = 'full') {
       return;
     }
 
-    state.raw = new Map(); state.wikiIdx = new Map(); state.picks.clear(); state.selectedId = null; state.view = 'shortlist';
+    state.raw = new Map(); state.wikiIdx = new Map(); state.guidesOpen = false; state.picks.clear(); state.selectedId = null; state.view = 'shortlist';
     state.allLimit = 150; state.failed = []; state.failedWiki = []; state.queryRadius = state.radius;
     recompute(); render();
 
@@ -1558,6 +1565,7 @@ function renderSummary() {
       <div><b>${state.finds.length.toLocaleString()}</b><span>finds within ${state.radius} mi</span></div>
     </div>
     ${navHTML()}
+    ${guidesHTML()}
     <div class="actions">
       <button class="btn sm" type="button" data-action="copy-link">🔗 Copy Byway link</button>
       <button class="btn sm" type="button" data-action="gpx">⬇ GPX</button>
@@ -1642,6 +1650,7 @@ function linksHTML(f) {
   if (f.wiki) out.push(`<a href="${esc(wikiURL(f.wiki))}" target="_blank" rel="noopener">Wikipedia ↗</a>`);
   const site = website(t); if (site) out.push(`<a href="${esc(site)}" target="_blank" rel="noopener">Website ↗</a>`);
   if (f.src !== 'wikipedia') out.push(`<a href="https://www.openstreetmap.org/${f.type}/${f.osmId}" target="_blank" rel="noopener">OSM ↗</a>`);
+  out.push(guideLinksHTML(f.lat, f.lon, f.town));
   return out.join('');
 }
 function detailsHTML(f) {
@@ -1724,6 +1733,7 @@ function popupHTML(f) {
       <button type="button" data-action="add-stop">＋ Route</button>
       <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}" target="_blank" rel="noopener">Directions ↗</a>
       ${f.wiki ? `<a href="${esc(wikiURL(f.wiki))}" target="_blank" rel="noopener">Wiki ↗</a>` : ''}
+      <a href="${esc(atlasURL(f.lat, f.lon))}" target="_blank" rel="noopener">Atlas Obscura ↗</a>
     </div>
   </div>`;
 }
@@ -1785,6 +1795,7 @@ function selectFind(id, from) {
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
   if (f.info === undefined && (f.wiki || f.wd)) enrich([f]).then(() => { updateCard(f.id); refreshPopup(f.id); });
+  if (f.town === undefined) { f.town = null; townOf(f.lat, f.lon).then(t => { if (t) { f.town = t; if (state.selectedId === f.id) updateCard(f.id); } else f.town = undefined; }); }
 }
 function togglePick(id) {
   const adding = !state.picks.has(id), partsBefore = navParts().length;
@@ -1796,6 +1807,75 @@ function togglePick(id) {
   const f = state.raw.get(id);
   if (f && f.info === undefined && (f.wiki || f.wd)) enrich([f]).then(() => updateCard(id));
 }
+
+/* ================= oddity guides (links out) =================
+   Atlas Obscura and Roadside America curate offbeat places but have no open data. Byway links to their
+   own pages for the spot you're looking at: Atlas Obscura's search accepts coordinates; Roadside America's
+   map takes a town and state, found with a reverse lookup (Photon), remembered in this browser. */
+const STATE_CODES = { Alabama: 'AL', Alaska: 'AK', Arizona: 'AZ', Arkansas: 'AR', California: 'CA', Colorado: 'CO', Connecticut: 'CT', Delaware: 'DE', 'District of Columbia': 'DC', Florida: 'FL', Georgia: 'GA', Hawaii: 'HI', Idaho: 'ID', Illinois: 'IL', Indiana: 'IN', Iowa: 'IA', Kansas: 'KS', Kentucky: 'KY', Louisiana: 'LA', Maine: 'ME', Maryland: 'MD', Massachusetts: 'MA', Michigan: 'MI', Minnesota: 'MN', Mississippi: 'MS', Missouri: 'MO', Montana: 'MT', Nebraska: 'NE', Nevada: 'NV', 'New Hampshire': 'NH', 'New Jersey': 'NJ', 'New Mexico': 'NM', 'New York': 'NY', 'North Carolina': 'NC', 'North Dakota': 'ND', Ohio: 'OH', Oklahoma: 'OK', Oregon: 'OR', Pennsylvania: 'PA', 'Rhode Island': 'RI', 'South Carolina': 'SC', 'South Dakota': 'SD', Tennessee: 'TN', Texas: 'TX', Utah: 'UT', Vermont: 'VT', Virginia: 'VA', Washington: 'WA', 'West Virginia': 'WV', Wisconsin: 'WI', Wyoming: 'WY',
+  Alberta: 'AB', 'British Columbia': 'BC', Manitoba: 'MB', 'New Brunswick': 'NB', 'Newfoundland and Labrador': 'NL', 'Nova Scotia': 'NS', Ontario: 'ON', 'Prince Edward Island': 'PE', Quebec: 'QC', Saskatchewan: 'SK' };
+const atlasURL = (lat, lon) => `https://www.atlasobscura.com/search?lat=${lat.toFixed(4)}&lng=${lon.toFixed(4)}`;
+const roadsideURL = t => `https://www.roadsideamerica.com/search/map?${new URLSearchParams({ city: t.town, state: t.code })}`;
+const townKey = (lat, lon) => `${lat.toFixed(2)},${lon.toFixed(2)}`; // ~0.7 mi grid
+const townsPending = new Map();
+// Nearest town and state/province code for a point, or null outside the US and Canada.
+function townOf(lat, lon) {
+  const key = townKey(lat, lon), saved = store.get('towns', {});
+  if (key in saved) return Promise.resolve(saved[key]);
+  if (townsPending.has(key)) return townsPending.get(key);
+  const p = (async () => {
+    let t = null;
+    try {
+      const j = await fetchJSON(`${CFG.photon.replace('/api/', '/reverse')}?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&lang=en&limit=1`, {}, 8000);
+      const pr = j.features && j.features[0] && j.features[0].properties;
+      const town = pr && (pr.city || pr.town || pr.village || pr.hamlet || pr.locality || pr.district || (pr.osm_key === 'place' ? pr.name : null));
+      const code = pr && STATE_CODES[pr.state];
+      if (town && code) t = { town, code };
+    } catch { return null; } // don't remember failures
+    const all = store.get('towns', {}); all[key] = t;
+    const keys = Object.keys(all); if (keys.length > 500) keys.slice(0, keys.length - 500).forEach(k => delete all[k]);
+    store.set('towns', all);
+    return t;
+  })().finally(() => townsPending.delete(key));
+  townsPending.set(key, p);
+  return p;
+}
+function guideLinksHTML(lat, lon, town) {
+  return `<a href="${esc(atlasURL(lat, lon))}" target="_blank" rel="noopener" title="Atlas Obscura's places around this spot">Atlas Obscura nearby ↗</a>` +
+    (town ? `<a href="${esc(roadsideURL(town))}" target="_blank" rel="noopener" title="Roadside America's map of ${esc(town.town)}, ${esc(town.code)}">Roadside America · ${esc(town.town)} ↗</a>` : '');
+}
+// Points along the drive for the guides list: the start, then about every 40 miles, then the end.
+function guidePoints(route) {
+  const pts = route.pts, cum = cumulative(pts), total = cum[cum.length - 1];
+  const step = Math.max(40, total / 12), out = [];
+  for (let d = 0, i = 0; ; d = Math.min(d + step, total)) {
+    while (i < pts.length - 1 && cum[i] < d) i++;
+    out.push({ lat: pts[i][0], lon: pts[i][1], mi: d * (route.distanceMi / (total || 1)) });
+    if (d >= total) break;
+  }
+  return out;
+}
+async function loadGuides(route) {
+  if (route.guides) return route.guides;
+  const pts = guidePoints(route), towns = new Array(pts.length);
+  let i = 0;
+  await Promise.all([0, 1].map(async () => { while (i < pts.length) { const k = i++; towns[k] = await townOf(pts[k].lat, pts[k].lon); } }));
+  const seen = new Set();
+  route.guides = pts.map((p, k) => ({ ...p, town: towns[k] })).filter(g => { const key = g.town ? `${g.town.town},${g.town.code}` : `${g.lat.toFixed(1)},${g.lon.toFixed(1)}`; if (seen.has(key)) return false; seen.add(key); return true; });
+  return route.guides;
+}
+function guidesHTML() {
+  const r = state.route; if (!r) return '';
+  if (state.guidesOpen && !r.guides && !r.guidesLoading) { // first open, or the route changed while open
+    r.guidesLoading = true;
+    loadGuides(r).then(() => { if (state.route === r) renderSummary(); });
+  }
+  const body = !state.guidesOpen ? '' : !r.guides ? '<p class="fine">Finding towns along the way…</p>' :
+    `<ol>${r.guides.map(g => `<li><span class="mi">mile ${Math.round(g.mi).toLocaleString()}</span><b>${g.town ? `${esc(g.town.town)}, ${esc(g.town.code)}` : 'Along the way'}</b>${guideLinksHTML(g.lat, g.lon, g.town)}</li>`).join('')}</ol>
+     <p class="fine">Their own curated maps of offbeat places, opened on their sites. Atlas Obscura searches around the exact spot; Roadside America maps the town.</p>`;
+  return `<details class="guides" id="guides" ${state.guidesOpen ? 'open' : ''}><summary>Oddity guides along this drive</summary>${body}</details>`;
+}
+function openGuides() { if (state.route) { state.guidesOpen = true; renderSummary(); } }
 
 /* ================= export / sharing ================= */
 function buildURL() {
@@ -2126,6 +2206,11 @@ function bind() {
       }
     }
   });
+  document.addEventListener('toggle', e => {
+    if (e.target.id !== 'guides') return;
+    if (e.target.open && !state.guidesOpen) openGuides();
+    else if (!e.target.open) state.guidesOpen = false;
+  }, true);
   document.addEventListener('change', e => {
     if (e.target.id === 'navHere') { state.navFromHere = e.target.checked; store.set('navFromHere', state.navFromHere); renderSummary(); }
   });
@@ -2160,7 +2245,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, sectionCells, OSM_RULES, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, sectionCells, OSM_RULES, guidePoints, townOf, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
