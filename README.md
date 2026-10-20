@@ -23,11 +23,11 @@ Places come from two sources. Wikipedia's "articles near a point" search runs fi
 
 For OpenStreetMap, Byway splits the route into ~40 mi sections, sends them to whichever mirror is healthy (a mirror that rate-limits or errors is set aside for a minute), and saves each answer (Wikipedia's too) in the browser for a week, so a retry or a repeat drive only asks for what's missing.
 
-### Places index (Northeast US)
+### Places index (East Coast)
 
-Inside New York, Pennsylvania, New Jersey and New England, OpenStreetMap places come from a monthly snapshot instead of the public Overpass servers. `.github/workflows/build-places.yml` downloads the Geofabrik `us-northeast` extract on the 3rd of each month (or on demand from the Actions tab), and `tools/build_places.py` keeps the places matching the app's `OSM_RULES` (the same list the Overpass query is built from). It reduces each to one point and writes them into small files, one per 0.25° square (about 17 × 12 mi), plus `index.json`, which lists the squares the extract fully covers. The output is force-pushed to the `places-data` branch, so history doesn't grow, and served by jsDelivr, with raw.githubusercontent.com as backup.
+Along the US East Coast (New England, New York, New Jersey and Pennsylvania down to Florida), OpenStreetMap places come from a monthly snapshot instead of the public Overpass servers. `.github/workflows/build-places.yml` downloads Geofabrik's `us-northeast` extract and the extracts for Delaware, Maryland, D.C., Virginia, the Carolinas, Georgia and Florida on the 3rd of each month (or on demand from the Actions tab). `tools/build_places.py` filters each extract, merges them, and keeps the places matching the app's `OSM_RULES` (the same list the Overpass query is built from). It reduces each to one point and writes them into small files, one per 0.25° square (about 17 × 12 mi), plus `index.json`, which lists the squares the extracts fully cover between them. The output is force-pushed to the `places-data` branch, so history doesn't grow, and served by jsDelivr, with raw.githubusercontent.com as backup.
 
-The app loads `index.json` while it looks up your stops. Any stretch of road whose corridor lies wholly inside covered squares reads those squares, which are saved in the browser. Everything else uses Overpass, as does any stretch whose squares fail to load. To cover more states, change `REGION` in the workflow (any Geofabrik region with a `.poly` file works).
+The app loads `index.json` while it looks up your stops. Any stretch of road whose corridor lies wholly inside covered squares reads those squares, which are saved in the browser. Everything else uses Overpass, as does any stretch whose squares fail to load. To cover more states, add Geofabrik extracts to `EXTRACTS` in the workflow (any region with a `.poly` file works).
 
 ### Private list
 

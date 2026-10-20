@@ -1,7 +1,8 @@
 name: Build places index
 
-# Monthly snapshot of the OpenStreetMap places Byway looks for in the Northeast US, published to the
-# places-data branch (replaced each time, so the repo doesn't grow) and served to the app by jsDelivr.
+# Monthly snapshot of the OpenStreetMap places Byway looks for along the US East Coast (the Northeast
+# region plus the coastal states south of it), published to the places-data branch (replaced each
+# time, so the repo doesn't grow) and served to the app by jsDelivr.
 on:
   schedule:
     - cron: '17 6 3 * *'   # 06:17 UTC on the 3rd of each month
@@ -17,24 +18,36 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
-      REGION: us-northeast
-      EXTRACT: https://download.geofabrik.de/north-america
+      REGION: us-east-coast
+      GEOFABRIK: https://download.geofabrik.de/north-america
+      # Geofabrik extracts, relative to $GEOFABRIK: the Northeast region plus each coastal state south of it.
+      EXTRACTS: >-
+        us-northeast
+        us/delaware us/maryland us/district-of-columbia us/virginia
+        us/north-carolina us/south-carolina us/georgia us/florida
     steps:
       - uses: actions/checkout@v4
 
       - name: Install osmium
         run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
 
-      - name: Download the OpenStreetMap extract
+      - name: Download the OpenStreetMap extracts
         run: |
-          curl -fsSL --retry 3 -o region.osm.pbf "$EXTRACT/$REGION-latest.osm.pbf"
-          curl -fsSL --retry 3 -o region.poly "$EXTRACT/$REGION.poly"
-          ls -lh region.osm.pbf region.poly
+          mkdir -p extracts
+          for e in $EXTRACTS; do
+            n=$(basename "$e")
+            curl -fsSL --retry 3 -o "extracts/$n.osm.pbf" "$GEOFABRIK/$e-latest.osm.pbf"
+            curl -fsSL --retry 3 -o "extracts/$n.poly" "$GEOFABRIK/$e.poly"
+          done
+          ls -lh extracts
 
       - name: Build the index
-        run: python3 tools/build_places.py --pbf region.osm.pbf --poly region.poly --region "$REGION" --out out/places/v1
+        run: |
+          pbfs=(); polys=()
+          for e in $EXTRACTS; do n=$(basename "$e"); pbfs+=("extracts/$n.osm.pbf"); polys+=("extracts/$n.poly"); done
+          python3 tools/build_places.py --pbf "${pbfs[@]}" --poly "${polys[@]}" --region "$REGION" --out out/places/v1
 
       - name: Publish to the places-data branch
         env:

@@ -8,7 +8,9 @@ which cells the extract fully covers. The app reads cells for any stretch of roa
 covered area instead of asking the busy public Overpass servers.
 
 Usage (the monthly GitHub workflow does this):
-  build_places.py --pbf us-northeast-latest.osm.pbf --poly us-northeast.poly --out out/places/v1
+  build_places.py --pbf us-northeast-latest.osm.pbf virginia-latest.osm.pbf … \
+                  --poly us-northeast.poly virginia.poly … --out out/places/v1
+  (several extracts are filtered one by one, merged, and their outlines together form the covered area)
   build_places.py --geojsonseq features.geojsonseq --poly area.poly --out ...   # tests: skip osmium
 
 Needs osmium-tool on PATH for --pbf. Standard library only otherwise.
@@ -124,30 +126,38 @@ def cell_key(lat, lon):
     return f'{math.floor(lat / GRID)}_{math.floor(lon / GRID)}'
 
 
-def covered_cells(rings):
-    """Cells lying wholly inside the extract (corners, edge midpoints and center all inside)."""
-    lons = [p[0] for r, h in rings if not h for p in r]
-    lats = [p[1] for r, h in rings if not h for p in r]
+def covered_cells(polys):
+    """Cells lying wholly inside the extracts (corners, edge midpoints and center each inside one of them).
+    polys: one ring list per extract, from read_poly()."""
+    lons = [p[0] for rings in polys for r, h in rings if not h for p in r]
+    lats = [p[1] for rings in polys for r, h in rings if not h for p in r]
     out = []
     for i in range(math.floor(min(lats) / GRID), math.floor(max(lats) / GRID) + 1):
         for j in range(math.floor(min(lons) / GRID), math.floor(max(lons) / GRID) + 1):
             s, w = i * GRID, j * GRID
             probes = [(w + dx * GRID, s + dy * GRID) for dx in (0, 0.5, 1) for dy in (0, 0.5, 1)]
-            if all(in_poly(x, y, rings) for x, y in probes):
+            if all(any(in_poly(x, y, rings) for rings in polys) for x, y in probes):
                 out.append(f'{i}_{j}')
     return out
 
 
-def run_osmium(pbf, rules, workdir):
-    filtered = os.path.join(workdir, 'filtered.osm.pbf')
+def run_osmium(pbfs, rules, workdir):
     seq = os.path.join(workdir, 'features.geojsonseq')
-    subprocess.run(['osmium', 'tags-filter', '--overwrite', '-o', filtered, pbf, *osmium_filter_expressions(rules)], check=True)
+    parts = []
+    for i, pbf in enumerate(pbfs):
+        part = os.path.join(workdir, f'filtered-{i}.osm.pbf')
+        subprocess.run(['osmium', 'tags-filter', '--overwrite', '-o', part, pbf, *osmium_filter_expressions(rules)], check=True)
+        parts.append(part)
+    filtered = parts[0]
+    if len(parts) > 1:  # neighbouring extracts overlap at their borders; merge drops the duplicates
+        filtered = os.path.join(workdir, 'filtered.osm.pbf')
+        subprocess.run(['osmium', 'merge', '--overwrite', '-o', filtered, *parts], check=True)
     subprocess.run(['osmium', 'export', '--overwrite', '-f', 'geojsonseq', '-x', 'print_record_separator=false',
                     '-a', 'type,id', '-o', seq, filtered], check=True)
     return seq
 
 
-def build(seq_path, rules, rings, out_dir, region, source_note):
+def build(seq_path, rules, polys, out_dir, region, source_note):
     cells, seen, kept = {}, set(), 0
     with open(seq_path, encoding='utf-8') as f:
         for line in f:
@@ -171,7 +181,7 @@ def build(seq_path, rules, rings, out_dir, region, source_note):
             cells.setdefault(cell_key(lat, lon), []).append([TYPE_CODE[osm_type], int(osm_id), lat, lon, small])
             kept += 1
 
-    covered = covered_cells(rings)
+    covered = covered_cells(polys)
     cell_dir = os.path.join(out_dir, 'c')
     os.makedirs(cell_dir, exist_ok=True)
     for key, els in cells.items():
@@ -191,9 +201,9 @@ def build(seq_path, rules, rings, out_dir, region, source_note):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument('--pbf', help='OSM extract (.osm.pbf); needs osmium-tool')
+    src.add_argument('--pbf', nargs='+', help='OSM extract(s) (.osm.pbf); needs osmium-tool')
     src.add_argument('--geojsonseq', help='already-exported features (one GeoJSON feature per line)')
-    ap.add_argument('--poly', required=True, help='coverage polygon (.poly) for the extract')
+    ap.add_argument('--poly', nargs='+', required=True, help='coverage polygon(s) (.poly), one per extract')
     ap.add_argument('--out', required=True, help='output folder, e.g. out/places/v1')
     ap.add_argument('--region', default='us-northeast')
     ap.add_argument('--source', default='© OpenStreetMap contributors, via Geofabrik')
@@ -201,10 +211,10 @@ def main():
     a = ap.parse_args()
 
     rules = load_rules(a.rules_from)
-    rings = read_poly(a.poly)
+    polys = [read_poly(p) for p in a.poly]
     with tempfile.TemporaryDirectory() as tmp:
         seq = run_osmium(a.pbf, rules, tmp) if a.pbf else a.geojsonseq
-        m = build(seq, rules, rings, a.out, a.region, a.source)
+        m = build(seq, rules, polys, a.out, a.region, a.source)
     print(f"{m['places']} places in {len(m['cells'])} cells; {len(m['covered'])} cells fully covered; built {m['built']}")
 
 
