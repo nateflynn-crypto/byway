@@ -533,7 +533,7 @@ test('wikipedia: articles are filtered to real stops and typed sensibly', async 
     return {
       museum: t('Lake Placid Winter Olympic Museum', 'Museum in Lake Placid, New York'),
       fort: t('Fort William Henry', 'Fort in Lake George, New York'),
-      site: t('Canfield Casino and Congress Park', 'Historic site in Saratoga Springs, New York'),
+      site: t('John Brown Farm State Historic Site', 'State historic site in New York, United States'),
       falls: t('Hulls Falls', 'Waterfall in Keene, New York'),
       mountain: t('Cascade Mountain (New York)', 'Mountain in Essex County, New York'),
       race: t('Saratoga Race Course', 'Thoroughbred horse racing venue in Saratoga Springs, New York'),
@@ -547,11 +547,27 @@ test('wikipedia: articles are filtered to real stops and typed sensibly', async 
       games: t('1932 Winter Olympics', 'Multi-sport event in Lake Placid, New York'),
       hotel: t('Grand Union Hotel', 'Demolished hotel in Saratoga Springs, New York'),
       hamlet: t('Museum Village (New York)', 'Hamlet in Warren County, New York'),
+      // cases seen in a live Troy → Lake Placid run
+      grant: t('Grant Cottage State Historic Site', 'United States historic place'),
+      nhs: t('Kate Mullany House', 'National Historic Site of the United States'),
+      generic: t('Jonesville Cemetery', 'Historic site in Saratoga County, New York'),
+      genericPO: t('United States Post Office', 'United States historic place'),
+      abandoned: t('Heritage Park', 'Abandoned sport stadium in Colonie, New York'),
+      river: t('Poesten Kill', 'River in New York, United States'),
+      giant: t('Giant Mountain Wilderness Area', 'Wilderness area in New York, United States'),
+      home: t('A. S. Rugge House', 'Historic home in Glens Falls, New York, US'),
+      hof: t('New York State Baseball Hall of Fame', ''),
+      monument: t('Soldiers and Sailors Monument', ''),
+      casino: t('Canfield Casino and Congress Park', 'Historic casino and park in Saratoga Springs, New York'),
     };
   });
   const want = { museum: 'museum', fort: 'history', site: 'history', falls: 'nature', mountain: 'nature', race: 'attraction', nodescMuseum: 'museum',
-    nodescOther: null, postOffice: null, school: null, battle: null, city: null, station: null, games: null, hotel: null, hamlet: null };
+    nodescOther: null, postOffice: null, school: null, battle: null, city: null, station: null, games: null, hotel: null, hamlet: null,
+    grant: 'history', nhs: 'history', generic: 'history', genericPO: null, abandoned: null, river: null, giant: 'nature', home: 'history', hof: 'museum', monument: 'art', casino: 'attraction' };
   for (const [k, v] of Object.entries(want)) assert(r[k] === v, `${k}: got ${r[k]}, want ${v}`);
+  const b = await page.evaluate(() => { const s = (n, d) => { const m = window.__byway.wikiTags({ name: n, wpdesc: d, wikipedia: 'en:' + n }); return window.__byway.classify(m.tags, n).base + (m.adj || 0); };
+    return { cemetery: s('Jonesville Cemetery', 'Historic site in Saratoga County, New York'), grant: s('Grant Cottage State Historic Site', 'United States historic place'), stadium: s('Joseph L. Bruno Stadium', 'Baseball stadium in Troy, New York'), stateFort: s('Fort William Henry', 'Fort in Lake George, New York') }; });
+  assert(b.cemetery < 2.5 && b.stadium < 3 && b.grant > 5 && b.stateFort > 5, `scores off: ${JSON.stringify(b)}`);
   await ctx.close();
 });
 
@@ -568,7 +584,7 @@ test('wikipedia + OpenStreetMap: merged without duplicates, junk dropped, names 
   assert(n.filter(x => x === 'Fort William Henry').length === 1 && by['Fort William Henry'].src === 'osm', 'Fort William Henry should appear once, from OpenStreetMap');
   assert(!n.includes('Lake Placid Winter Olympic Museum') && n.includes('Lake Placid Olympic Museum'), 'same Wikidata ID should merge into the OpenStreetMap entry');
   assert(n.filter(x => x === 'Hulls Falls').length === 1, 'Hulls Falls duplicated across sources');
-  assert(by['Canfield Casino and Congress Park'].src === 'wikipedia' && by['Canfield Casino and Congress Park'].cat === 'history', 'Canfield Casino should be a Wikipedia-sourced History find');
+  assert(by['Canfield Casino and Congress Park'].src === 'wikipedia' && by['Canfield Casino and Congress Park'].cat === 'attraction', `Canfield Casino: ${JSON.stringify(by['Canfield Casino and Congress Park'])}`);
   await ctx.close();
 });
 

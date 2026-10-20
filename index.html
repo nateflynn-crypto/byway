@@ -625,7 +625,7 @@ function classify(t, name) {
   else if (t.leisure || t.boundary) { cat = 'nature'; base = 0.7; }
   else if (tour === 'attraction') { cat = 'attraction'; base = 2.0; }
 
-  if (weird) { cat = 'weird'; base += 2.5; }
+  if (weird && !nat && !t.boundary && !t.leisure) { cat = 'weird'; base += 2.5; } // a "Giant Mountain" isn't a roadside oddity
   if (t.wikipedia) base += 3.5; else if (t.wikidata) base += 1.8;
   if (t['ref:nhl'] || t['heritage:operator'] === 'nhl') base += 1.0;
   if (t.website || t['contact:website'] || t.url) base += 0.5;
@@ -881,7 +881,12 @@ const WP_STRONG = [ // also safe on the title alone, for articles without a desc
   [/\b(battlefield|battleground)\b/, WP({ historic: 'battlefield' })],
   [/\bwaterfalls?\b|\bfalls$/, WP({ natural: 'waterfall' })],
   [/\b(state|national|provincial) park\b/, WP({ leisure: 'park' })],
+  [/\bhall of fame\b/, WP({ tourism: 'museum' })],
+  [/\b(state historic site|national historic site|national historical park|state historical park|national monument|national memorial)\b/, WP({ boundary: 'protected_area', protection_title: 'Historic Site' })],
+  [/\b(soldiers|veterans|war) (and sailors )?(monument|memorial)\b/, WP({ tourism: 'artwork', artwork_type: 'statue' })],
 ];
+// National Register listings often carry a generic description; for those, the title says more.
+const WP_GENERIC = /^(united states )?(historic|historical) (site|place|places|building|structure|landmark|property|resource)$|^(site|place|building|structure|historic site|nrhp-listed (site|place|building))$/;
 const WP_RULES = [
   [/\b(art gallery|gallery)\b/, WP({ tourism: 'gallery', website: 'wikipedia' })],
   [/\b(zoo|aquarium|wildlife park|safari park)\b/, WP({ tourism: 'zoo' })],
@@ -892,11 +897,12 @@ const WP_RULES = [
   [/\b(gorge|chasm|canyon|natural arch|natural bridge|hot springs?|geyser|rock formation|glacial erratic)\b/, WP({ natural: 'gorge' })],
   [/\b(windmill|watermill|gristmill|grist mill)\b/, WP({ man_made: 'watermill' })],
   [/\bobservatory\b/, WP({ man_made: 'observatory' })],
-  [/\b(state historic site|national historic site|historic site|historical park|national monument|national memorial|historic landmark|heritage site|living history)\b/, WP({ boundary: 'protected_area', protection_title: 'Historic Site' })],
+  [/\b(historical park|historic park|heritage site|living history|national historic landmark)\b/, WP({ boundary: 'protected_area', protection_title: 'Historic Site' })],
   [/\b(historic ship|steamboat|steamship|paddle steamer|schooner|tour boat|riverboat|submarine|warship|battleship|locomotive|aircraft)\b/, WP({ historic: 'ship' })],
   [/\b(shipwreck|wreck)\b/, WP({ historic: 'wreck' })],
   [/\b(ruins?|ruined)\b/, WP({ historic: 'ruins' })],
-  [/\bhistoric district\b/, WP({ historic: 'building' }, -1.5)],
+  [/\b(abandoned|defunct|demolished|destroyed|former|closed|disused|proposed|planned|cancelled|canceled)\b/, null],
+  [/\bhistoric district\b/, WP({ historic: 'building' }, -2)],
   [/\bschoolhouse\b/, WP({ historic: 'building' }, -1.5)],
   // not destinations
   [/\b(battle|siege|skirmish|massacre|raid|campaign|expedition|treaty|election|riot|fire|flood|tornado|hurricane|earthquake|disaster|accident|crash|derailment|shooting|murder|olympics|olympic games|championships?|tournament|festival|event|season)\b/, null],
@@ -904,7 +910,8 @@ const WP_RULES = [
   [/\b(school|college|university|academy|institute|seminary|campus)\b/, null],
   [/\b(post office|library|courthouse|court house|town hall|city hall|county building|government|agency|authority|department|office|bank|hospital|clinic|prison|jail|correctional|fire station|police|armory)\b/, null],
   [/\b(station|airport|airfield|heliport|subway|metro|interchange)\b/, null],
-  [/\b(highway|road|route|street|avenue|interstate|parkway|expressway|turnpike|boulevard|trail|railroad|railway|rail line)\b/, null],
+  [/\b(highway|road|route|street|avenue|interstate|parkway|expressway|turnpike|boulevard|trail|railroad|railway|rail line|roundabout|waterway)\b/, null],
+  [/\b(river|creek|brook|stream|kill|tributary|canal system)\b/, null],
   [/\b(company|corporation|manufacturer|brand|store|shop|shopping|mall|restaurant|diner|bar|brewery|winery|hotel|motel|inn|apartments?|condominium|office building|skyscraper)\b/, null],
   [/\b(organization|organisation|association|society|club|team|league|newspaper|magazine|radio|television|website|band|album|song|film|novel)\b/, null],
   [/\b(industrial|office|business|technology|research|trailer|mobile home|skate|dog) park\b/, null],
@@ -913,18 +920,18 @@ const WP_RULES = [
   // places, weaker
   [/\b(monument|memorial|statue|sculpture|obelisk)\b/, WP({ tourism: 'artwork', artwork_type: 'statue' })],
   [/\bmural\b/, WP({ tourism: 'artwork', artwork_type: 'mural' })],
-  [/\b(ski jump(ing)?|bobsled|luge|olympic venue|race ?course|racetrack|speedway|raceway|racing venue)\b/, WP({ tourism: 'attraction' }, -0.5)],
-  [/\b(stadium|arena|rink|sports venue|ballpark)\b/, WP({ tourism: 'attraction' }, -2)],
+  [/\b(ski jump(ing)?|bobsled|luge|olympic venue|race ?course|race ?track|speedway|raceway|racing venue)\b/, WP({ tourism: 'attraction' }, -0.5)],
+  [/\b(stadium|arena|rink|sports venue|ballpark|field house|sports grounds?)\b/, WP({ tourism: 'attraction' }, -3)],
   [/\b(ski area|ski resort|mountain resort)\b/, WP({ tourism: 'attraction' }, -1.5)],
-  [/\b(theat(er|re)|opera house|music hall|concert hall|casino|carousel)\b/, WP({ tourism: 'attraction' }, -1.5)],
+  [/\b(theat(er|re)|opera house|music hall|concert hall|casino|carousel|arts? cent(er|re)|performing arts)\b/, WP({ tourism: 'attraction' }, -1.5)],
   [/\b(botanical garden|arboretum|gardens?)\b/, WP({ leisure: 'garden' })],
-  [/\bpark\b/, WP({ leisure: 'park' })],
-  [/\b(wilderness|forest preserve|nature preserve|nature reserve|wildlife refuge|wildlife management area|national forest|state forest|preserve|sanctuary)\b/, WP({ boundary: 'protected_area' })],
+  [/\bpark\b/, WP({ leisure: 'park' }, -1.5)],
+  [/\b(wilderness|forest preserve|nature preserve|nature reserve|wildlife refuge|wildlife management area|national forest|state forest|preserve|sanctuary|natural area)\b/, WP({ boundary: 'protected_area' }, -1)],
   [/\b(fire lookout|lookout tower|observation tower|tower)\b/, WP({ man_made: 'tower' }, -1.5)],
   [/\b(church|cathedral|chapel|synagogue|temple|mosque|meeting ?house|abbey|monastery|shrine|basilica)\b/, WP({ historic: 'church' }, -2)],
-  [/\b(house|mansion|homestead|farmhouse|cabin|estate|villa|plantation|farm|barn)\b/, WP({ historic: 'house' }, -2)],
+  [/\b(house|home|mansion|homestead|farmhouse|cabin|cottage|estate|villa|plantation|farm|barn)\b/, WP({ historic: 'house' }, -2)],
   [/\b(cemetery|burial ground|graveyard|grave|tomb|mausoleum)\b/, WP({ historic: 'tomb' }, -2.5)],
-  [/\b(lake|pond|river|creek|brook|stream|mountain|peak|summit|hill|island|bay|beach|cliff|ledge|bluff|valley|notch|gap|pass|swamp|marsh|bog|spring)\b/, WP({ natural: 'feature' }, -2.5)],
+  [/\b(lake|pond|mountain|peak|summit|hill|island|bay|beach|cliff|ledge|bluff|valley|notch|gap|pass|swamp|marsh|bog|spring|ridge)\b/, WP({ natural: 'feature' }, -2.5)],
   [/\b(bridge|viaduct|aqueduct|tunnel|canal|lock)\b/, WP({ man_made: 'bridge' }, -2)],
   [/\b(historic building|building|block|hall|factory|mill)\b/, WP({ historic: 'building' }, -2.5)],
 ];
@@ -935,9 +942,16 @@ function wikiTags(wt) {
     // Short descriptions read "<type> in <place>"; match the type part only, so "Mountain in Essex
     // County" isn't mistaken for a county and "Museum in Troy" isn't mistaken for a town.
     const head = desc.split(/\s+(?:in|of|on|at|near|along|by|within|across|between|for|from|located)\s+|[,;(]/)[0].trim() || desc;
-    for (const [re, r] of WP_STRONG) if (re.test(head)) { m = r; break; }
-    if (!m) for (const [re, r] of WP_RULES) if (re.test(head)) { m = r === null ? 'drop' : r; break; }
-    if (!m) for (const [re, r] of WP_STRONG) if (re.test(title)) { m = r; break; } // unrecognised type: trust a telling title
+    if (WP_GENERIC.test(head)) {
+      const t = title.replace(/\s*\([^)]*\)$/, '');
+      for (const [re, r] of WP_STRONG) if (re.test(t)) { m = r; break; }
+      if (!m) for (const [re, r] of WP_RULES) if (re.test(t)) { m = r === null ? 'drop' : r; break; }
+      if (!m) m = WP({ historic: 'building' }, -2.5);
+    } else {
+      for (const [re, r] of WP_STRONG) if (re.test(head)) { m = r; break; }
+      if (!m) for (const [re, r] of WP_RULES) if (re.test(head)) { m = r === null ? 'drop' : r; break; }
+      if (!m) for (const [re, r] of WP_STRONG) if (re.test(title)) { m = r; break; } // unrecognised type: trust a telling title
+    }
   } else {
     for (const [re, r] of WP_STRONG) if (re.test(title)) { m = r; break; }
   }
