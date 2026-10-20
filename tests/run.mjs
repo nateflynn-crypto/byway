@@ -223,6 +223,8 @@ test('classify: heritage, shop-like gallery, bare viewpoint, weird', async () =>
       bareView: c({ tourism: 'viewpoint' }, 'Valley View Ledge'),
       generic: c({ tourism: 'viewpoint' }, 'Scenic Overlook'),
       gnome: c({ tourism: 'attraction' }, "World's Largest Garden Gnome"),
+      giantView: c({ tourism: 'viewpoint' }, 'Giant Washbowl Overlook'),
+      giantPeak: c({ natural: 'peak' }, 'Giant Mountain'),
       priv: c({ historic: 'ruins', access: 'private' }, 'Private Ruins'),
     };
   });
@@ -232,6 +234,8 @@ test('classify: heritage, shop-like gallery, bare viewpoint, weird', async () =>
   assert(Math.abs(r.bareView.base - 0.5) < 1e-9, `bare viewpoint → ${r.bareView.base}`);
   assert(r.generic.base < 0, `generic name should go negative → ${r.generic.base}`);
   assert(r.gnome.cat === 'weird', `gnome → ${r.gnome.cat}`);
+  assert(r.giantView.cat === 'nature' && Math.abs(r.giantView.base - 0.5) < 1e-9, `"Giant" viewpoint → ${JSON.stringify(r.giantView)}`);
+  assert(r.giantPeak.cat === 'nature', `"Giant" peak → ${r.giantPeak.cat}`);
   assert(r.priv.base < 0, `private → ${r.priv.base}`);
   await ctx.close();
 });
