@@ -31,7 +31,7 @@ The app loads `index.json` while it looks up your stops. Any stretch of road who
 
 ### Private list
 
-`private/places.enc.json` is a personal list of places (currently an Atlas Obscura export for the Northeast) encrypted with AES-256-GCM. It's public on GitHub but unreadable without the key. Opening a Byway link ending in `#key=…` once stores the key in that browser and removes it from the address bar; `#key=forget` removes it. With a key, Byway downloads and decrypts the list in the browser on each visit (it never stores it unencrypted). Places near the route join the finds, and places that match an existing find are merged into it. Without a key, nothing changes.
+`private/places.enc.json` is a personal list of places (currently an Atlas Obscura export for the East Coast, Maine to Florida) encrypted with AES-256-GCM. It's public on GitHub but unreadable without the key. Opening a Byway link ending in `#key=…` once stores the key in that browser and removes it from the address bar; `#key=forget` removes it. With a key, Byway downloads and decrypts the list in the browser on each visit (it never stores it unencrypted). Places near the route join the finds, and places that match an existing find are merged into it. Without a key, nothing changes.
 
 To rebuild or re-key it, use `tools/private_list.mjs` (`newkey`, `atlas`, `encrypt`, `decrypt`). Keep plain lists and keys out of the repo; `.gitignore` blocks them.
 

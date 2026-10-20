@@ -7,9 +7,11 @@
 
    node tools/private_list.mjs newkey
        → prints a new random key (keep it out of the repo)
-   node tools/private_list.mjs atlas --csv atlasobscura.csv --manifest index.json --out list.json
-       → Atlas Obscura export → Northeast places only (cells of the places index), open and shown,
+   node tools/private_list.mjs atlas --csv atlasobscura.csv --states east --out list.json
+       → Atlas Obscura export → places in the listed US states ("east" = Maine to Florida plus
+         Vermont, Pennsylvania and D.C.; or a comma-separated list of state names), open and shown,
          foods excluded. Keeps id, name, one-line subtitle, coordinates, link, town.
+       (or --manifest index.json instead of --states: places inside the places index's cells)
    node tools/private_list.mjs encrypt --in list.json --key <key> --out private/places.enc.json
    node tools/private_list.mjs decrypt --in private/places.enc.json --key <key>   (check a file)
 
@@ -50,18 +52,26 @@ if (cmd === 'newkey') {
   console.log(b64url(crypto.getRandomValues(new Uint8Array(32))));
 } else if (cmd === 'atlas') {
   const rows = parseCSV(fs.readFileSync(args.csv, 'utf8'));
-  const m = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
-  const grid = m.grid || 0.25, cells = new Set([...(m.covered || []), ...Object.keys(m.cells || {})]);
+  const EAST = ['Maine', 'New Hampshire', 'Vermont', 'Massachusetts', 'Rhode Island', 'Connecticut', 'New York', 'New Jersey', 'Pennsylvania',
+    'Delaware', 'Maryland', 'Washington, D.C.', 'Virginia', 'North Carolina', 'South Carolina', 'Georgia', 'Florida'];
+  const states = args.states ? (args.states === 'east' ? EAST : args.states.split(',').map(x => x.trim())) : null;
+  let inArea;
+  if (states) inArea = r => r.country === 'United States' && states.some(st => r.location.trim().endsWith(st));
+  else {
+    const m = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
+    const grid = m.grid || 0.25, cells = new Set([...(m.covered || []), ...Object.keys(m.cells || {})]);
+    inArea = r => cells.has(`${Math.floor(+r.coordinates_lat / grid)}_${Math.floor(+r.coordinates_lng / grid)}`);
+  }
   const places = [];
   for (const r of rows) {
     const lat = +r.coordinates_lat, lon = +r.coordinates_lng;
-    if (!isFinite(lat) || !isFinite(lon) || !cells.has(`${Math.floor(lat / grid)}_${Math.floor(lon / grid)}`)) continue;
+    if (!isFinite(lat) || !isFinite(lon) || !inArea(r)) continue;
     if (r.thing_type === 'Food' || String(r.hide_from_maps).toLowerCase() === 'true' || String(r.physical_status).toUpperCase() === 'CLOSED') continue;
     const url = r.url.startsWith('http') ? r.url : 'https://www.atlasobscura.com' + r.url;
     places.push([+r.id, r.title.trim(), r.subtitle.trim(), +lat.toFixed(6), +lon.toFixed(6), url, r.location.trim()]);
   }
   places.sort((a, b) => a[0] - b[0]);
-  fs.writeFileSync(args.out, JSON.stringify({ v: 1, source: 'Atlas Obscura (personal use)', built: new Date().toISOString().slice(0, 10), places }));
+  fs.writeFileSync(args.out, JSON.stringify({ v: 1, source: 'Atlas Obscura (personal use)', area: states ? (args.states === 'east' ? 'East Coast' : states.join(', ')) : 'places index cells', built: new Date().toISOString().slice(0, 10), places }));
   console.log(`${places.length} places → ${args.out}`);
 } else if (cmd === 'encrypt') {
   const key = await importKey(args.key);
