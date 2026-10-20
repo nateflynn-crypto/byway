@@ -208,6 +208,7 @@ footer p{margin:6px 0}
   .qr{flex-direction:column;align-items:flex-start}
   h1{font-size:38px}
 }
+.tiles-dark{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) saturate(.8)}
 </style>
 </head>
 <body>
@@ -263,7 +264,7 @@ footer p{margin:6px 0}
         <p>Routing comes from OSRM. Byway then asks OpenStreetMap (through the Overpass API) for named attractions, museums, landmarks, historic sites, public art, viewpoints, waterfalls, covered bridges and more inside your corridor. Places linked to Wikipedia get a description and photo.</p>
         <p>Distances are straight-line from the route, and detour times are rough estimates. Always check hours and access before you leave the highway.</p>
       </details>
-      <p>Runs entirely in your browser — no account, no tracking. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · tiles © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a> · routing <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a> · search <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a> · descriptions Wikipedia.</p>
+      <p>Runs entirely in your browser — no account, no tracking. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · tiles © OpenStreetMap · routing <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a> · search <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a> · descriptions Wikipedia.</p>
     </footer>
   </aside>
   <main id="map" aria-label="Map"></main>
@@ -289,6 +290,7 @@ const CFG = {
     'https://overpass.private.coffee/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
   ],
+  overpassMs: 65000, // per attempt; a hung host fails over to the next one instead of stalling for minutes
   chunkMi: 120,
   concurrency: 2,
 };
@@ -727,7 +729,7 @@ async function getRoute(coords, signal) {
 
 function overpassQuery(poly, rM) {
   const A = `(around:${rM},${poly})`;
-  return `[out:json][timeout:110];(` +
+  return `[out:json][timeout:55];(` +
     `nwr${A}[tourism~"^(attraction|museum|artwork|viewpoint|gallery|zoo|aquarium|theme_park)$"][name];` +
     `nwr${A}[historic~"^(castle|fort|battlefield|ship|aircraft|locomotive|railway_car|monument|archaeological_site|wreck|tank|mine|ruins|city_gate|lighthouse|manor|tower|cannon)$"][name];` +
     `nwr${A}[historic~"^(memorial|building|house|church|wayside_cross|milestone|boundary_stone|tomb)$"][name][wikipedia];` +
@@ -742,14 +744,14 @@ function overpassQuery(poly, rM) {
 }
 async function overpass(query, signal, offset = 0) {
   let lastErr;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const url = CFG.overpass[(attempt + offset) % CFG.overpass.length];
     try {
       const j = await fetchJSON(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
-      }, 150000, signal);
+      }, CFG.overpassMs, signal);
       if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error(j.remark);
       return j;
     } catch (e) {
@@ -1181,11 +1183,11 @@ function updateCard(id) {
 /* map */
 function setTiles() {
   if (tiles) tiles.remove();
-  tiles = L.tileLayer(isDark()
-    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd', maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  /* OSM standard tiles need no key; dark mode is a CSS filter on the tile pane (.tiles-dark). */
+  tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    className: isDark() ? 'tiles-dark' : '',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 }
 function drawRoute(active, fit) {

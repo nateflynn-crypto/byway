@@ -16,7 +16,7 @@ Everything runs in the browser — one self-contained `index.html`, no build ste
 | Driving route | [OSRM](https://project-osrm.org) public servers |
 | Places along the route | OpenStreetMap via the [Overpass API](https://overpass-api.de) |
 | Descriptions & photos | Wikipedia / Wikidata |
-| Map tiles | © OpenStreetMap contributors, © CARTO |
+| Map tiles | © OpenStreetMap contributors (tile.openstreetmap.org) |
 | Navigation handoff | Google Maps URLs (`dir_action=navigate`) |
 
 Route links keep the trip in the address (`?from=…&via=…&to=…`), so a link reopens the same drive.
