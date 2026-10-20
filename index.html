@@ -2315,6 +2315,8 @@ function init() {
   pickLayer = L.layerGroup().addTo(map);
 
   readKeyFromLink();
+  // A key link opened while this same page is showing only changes the #fragment (no reload).
+  window.addEventListener('hashchange', () => { if (/key=/.test(location.hash)) { readKeyFromLink(); if (state.route) run(); } });
   const p = new URLSearchParams(location.search);
   const from = p.get('from'), to = p.get('to'), vias = p.getAll('via');
   state.radius = clamp(Math.round(+p.get('r')) || 5, 1, 15);

@@ -953,6 +953,18 @@ test('private list: key link unlocks it; places merge into the drive; nothing re
   await ctx.close();
 });
 
+test('private list: key link works when the same page is already open (fragment-only change)', async () => {
+  const { key } = testPrivate();
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  await page.goto(BASE + TROY + '#key=' + key); // same document: only the hash changes
+  await page.waitForFunction(() => window.__byway.state.finds.some(f => f.src === 'atlas'), null, { timeout: 15000 });
+  const d = await page.evaluate(() => ({ hash: location.hash, stored: !!localStorage.getItem('byway.privateKey') }));
+  assert(d.hash === '' && d.stored, JSON.stringify(d));
+  await ctx.close();
+});
+
 test('private list: no key → never fetched; wrong key → ignored and logged', async () => {
   testPrivate();
   const w1 = makeWorld();
