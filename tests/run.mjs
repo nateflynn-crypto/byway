@@ -92,6 +92,9 @@ function testIndex() {
 }
 const INDEX_PREFIX = { 'cdn.jsdelivr.net': '/gh/nateflynn/byway@places-data/places/v1/', 'raw.githubusercontent.com': '/nateflynn/byway/places-data/places/v1/' };
 
+// Towns along the fixture route, for the fake reverse lookup.
+const TOWNS = [['Troy', 42.7284, -73.6918], ['Latham', 42.747, -73.759], ['Clifton Park', 42.8656, -73.771], ['Saratoga Springs', 43.0831, -73.7846], ['Glens Falls', 43.3095, -73.644], ['Lake George', 43.4262, -73.7123], ['Warrensburg', 43.4967, -73.7762], ['Schroon Lake', 43.73, -73.817], ['North Hudson', 43.98, -73.74], ['Keene', 44.256, -73.792], ['Lake Placid', 44.2795, -73.9799]];
+
 /* ---------- fake services ---------- */
 const FIX_IDS_IN_CORRIDOR = FIX.elements.map(e => e.id).filter(id => id !== 26);
 const OVERPASS_HOSTS = ['overpass-api.de', 'overpass.private.coffee', 'overpass.kumi.systems', 'maps.mail.ru'];
@@ -113,6 +116,12 @@ async function handle(route, world) {
   if (host === 'cdnjs.cloudflare.com' && /leaflet.*\.css$/.test(u.pathname)) return route.fulfill({ status: 200, contentType: 'text/css', body: LEAFLET_CSS });
   if (/fonts\.(googleapis|gstatic)\.com$/.test(host)) return route.fulfill({ status: 200, contentType: 'text/css', body: '' });
   if (/tile\.openstreetmap\.org$/.test(host)) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX });
+  if (host === 'photon.komoot.io' && u.pathname.startsWith('/reverse')) {
+    world.requests.push({ kind: 'reverse' });
+    const la = +u.searchParams.get('lat'), lo = +u.searchParams.get('lon');
+    const near = TOWNS.reduce((a, t) => (havM([la, lo], [t[1], t[2]]) < havM([la, lo], [a[1], a[2]]) ? t : a));
+    return json({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [near[2], near[1]] }, properties: { osm_key: 'place', osm_value: 'town', name: near[0], city: near[0], state: 'New York', countrycode: 'US' } }] });
+  }
   if (host === 'photon.komoot.io') {
     world.requests.push({ kind: 'photon', url: u.href });
     if (world.photonDelay) await new Promise(r => setTimeout(r, world.photonDelay));
@@ -824,6 +833,49 @@ test('places index: cells are saved, so a reload downloads none', async () => {
   assert(cellsFirst >= 1 && again === 0, `first run fetched ${cellsFirst} cells; reload fetched ${again} index files`);
   const fx = await page.evaluate(() => window.__byway.exportFixture());
   assert(fx.elements.some(e => e.tags.name === 'The Hyde Collection'), 'fixture export misses places that came from the index');
+  await ctx.close();
+});
+
+test('oddity guides: towns along the drive with Atlas Obscura and Roadside America links', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  assert(world.requests.filter(q => q.kind === 'reverse').length === 0, 'towns looked up before the guides were opened');
+  await page.evaluate(() => { document.querySelector('#guides').open = true; });
+  await page.waitForFunction(() => document.querySelectorAll('#guides li').length > 0, null, { timeout: 10000 });
+  const g = await page.evaluate(() => [...document.querySelectorAll('#guides li')].map(li => ({ town: li.querySelector('b').textContent, links: [...li.querySelectorAll('a')].map(a => a.href) })));
+  const towns = g.map(x => x.town);
+  assert(towns[0] === 'Troy, NY' && towns[towns.length - 1] === 'Lake Placid, NY', `towns: ${towns}`);
+  assert(new Set(towns).size === towns.length && towns.length >= 3, `towns should be distinct and several: ${towns}`);
+  for (const x of g) {
+    const ao = new URL(x.links.find(h => h.includes('atlasobscura.com')));
+    const ra = new URL(x.links.find(h => h.includes('roadsideamerica.com')));
+    assert(ao.pathname === '/search' && ao.searchParams.get('lat') && ao.searchParams.get('lng'), `Atlas Obscura link: ${ao}`);
+    assert(ra.pathname === '/search/map' && `${ra.searchParams.get('city')}, ${ra.searchParams.get('state')}` === x.town, `Roadside America link: ${ra}`);
+  }
+  const reverse = world.requests.filter(q => q.kind === 'reverse').length;
+  assert(reverse <= 6, `${reverse} town lookups for a ~136 mi drive`);
+  world.reset();
+  await page.reload(); await settle(page);
+  await page.evaluate(() => { document.querySelector('#guides').open = true; });
+  await page.waitForFunction(() => document.querySelectorAll('#guides li').length > 0, null, { timeout: 10000 });
+  assert(world.requests.filter(q => q.kind === 'reverse').length === 0, 'towns were looked up again after a reload');
+  await ctx.close();
+});
+
+test('oddity guides: an opened find links to Atlas Obscura at its spot and Roadside America for its town', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  const target = await page.evaluate(() => { const f = window.__byway.state.shortlist.find(x => x.name === 'Fort William Henry'); return f && { id: f.id, lat: f.lat, lon: f.lon }; });
+  assert(target, 'Fort William Henry not on the shortlist');
+  await page.click(`#list .card[data-id="${target.id}"] h3`);
+  await page.waitForFunction(id => !!document.querySelector(`#list .card[data-id="${id}"] .details a[href*="roadsideamerica.com"]`), target.id, { timeout: 10000 });
+  const links = await page.evaluate(id => [...document.querySelectorAll(`#list .card[data-id="${id}"] .details a`)].map(a => a.href), target.id);
+  const ao = new URL(links.find(h => h.includes('atlasobscura.com')));
+  const ra = new URL(links.find(h => h.includes('roadsideamerica.com')));
+  assert(Math.abs(+ao.searchParams.get('lat') - target.lat) < 1e-3 && Math.abs(+ao.searchParams.get('lng') - target.lon) < 1e-3, `Atlas Obscura link not at the find: ${ao}`);
+  assert(ra.searchParams.get('city') === 'Lake George' && ra.searchParams.get('state') === 'NY', `Roadside America link: ${ra}`);
   await ctx.close();
 });
 
