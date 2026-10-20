@@ -72,6 +72,26 @@ function overpassAnswer(q, extra = []) {
   return { version: 0.6, generator: 'byway-test', elements: els };
 }
 
+/* ---------- places index built from the fixture by the real builder ---------- */
+// Coverage area for tests: Troy → Schroon Lake (lat 42.5–44.0), deliberately leaving Lake Placid out.
+const TEST_POLY = 'test-area\n1\n  -74.5 42.5\n  -73.0 42.5\n  -73.0 44.0\n  -74.5 44.0\n  -74.5 42.5\nEND\nEND\n';
+let builtIndex;
+function testIndex() {
+  if (builtIndex !== undefined) return builtIndex;
+  const py = spawnSync('python3', ['--version'], { encoding: 'utf8' });
+  if (py.status !== 0) return (builtIndex = null);
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'byway-index-'));
+  const seq = path.join(dir, 'features.geojsonseq'), poly = path.join(dir, 'area.poly'), out = path.join(dir, 'places', 'v1');
+  fs.writeFileSync(seq, FIX.elements.map(e => JSON.stringify({ type: 'Feature',
+    geometry: { type: 'Point', coordinates: e.lat != null ? [e.lon, e.lat] : [e.center.lon, e.center.lat] },
+    properties: { '@type': e.type, '@id': e.id, ...e.tags } })).join('\n') + '\n');
+  fs.writeFileSync(poly, TEST_POLY);
+  const r = spawnSync('python3', [path.join(ROOT, 'tools', 'build_places.py'), '--geojsonseq', seq, '--poly', poly, '--out', out, '--rules-from', path.join(ROOT, 'index.html')], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`build_places.py failed:\n${r.stderr}`);
+  return (builtIndex = { dir: out, log: r.stdout.trim() });
+}
+const INDEX_PREFIX = { 'cdn.jsdelivr.net': '/gh/nateflynn/byway@places-data/places/v1/', 'raw.githubusercontent.com': '/nateflynn/byway/places-data/places/v1/' };
+
 /* ---------- fake services ---------- */
 const FIX_IDS_IN_CORRIDOR = FIX.elements.map(e => e.id).filter(id => id !== 26);
 const OVERPASS_HOSTS = ['overpass-api.de', 'overpass.private.coffee', 'overpass.kumi.systems', 'maps.mail.ru'];
@@ -101,6 +121,15 @@ async function handle(route, world) {
     return json({ type: 'FeatureCollection', features: hit ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [hit[1], hit[0]] }, properties: { name: q.split(',')[0], state: 'New York', countrycode: 'US', osm_value: 'town' } }] : [] });
   }
   if (host === 'nominatim.openstreetmap.org') return json([]);
+  if (INDEX_PREFIX[host] && u.pathname.startsWith(INDEX_PREFIX[host])) {
+    const rel = u.pathname.slice(INDEX_PREFIX[host].length);
+    world.requests.push({ kind: 'index', host, rel });
+    const idx = world.index && testIndex();
+    if (!idx || world.index === 'fail' || (world.index === 'cdnfail' && host === 'cdn.jsdelivr.net')) return route.fulfill({ status: 503, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: 'unavailable' });
+    const file = path.join(idx.dir, rel);
+    if (!file.startsWith(idx.dir) || !fs.existsSync(file)) return route.fulfill({ status: 404, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: 'not found' });
+    return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(file, 'utf8') });
+  }
   if (host === 'router.project-osrm.org' || host === 'routing.openstreetmap.de') {
     world.requests.push({ kind: 'osrm', url: u.href });
     const nLegs = Math.max(1, decodeURIComponent(u.pathname.split('/').pop()).split(';').length - 1);
@@ -708,6 +737,76 @@ test('places: stops are looked up at the same time and remembered for next time'
   assert(second.remembered === 2 && second.s < 0.5, `second run geocode: ${JSON.stringify(second)}`);
   const recalled = await page.evaluate(() => window.__byway.recallPlace('  troy,   ny '));
   assert(recalled && Math.abs(recalled.lat - 42.7284) < 1e-4, 'lookup key should ignore case and spacing');
+  await ctx.close();
+});
+
+const OSM_RULES_SRC = JSON.parse(/\/\*OSM_RULES\*\/(.*?)\/\*END_OSM_RULES\*\//s.exec(HTML)[1]);
+const ruleMatch = e => OSM_RULES_SRC.some(r => (r.t !== 'way' || e.type === 'way') && r.v.includes(e.tags[r.k]) && r.need.every(k => k in e.tags));
+
+test('places index builder: keeps exactly the rule matches, one point each, with coverage', async () => {
+  const idx = testIndex(); if (!idx) return 'skipped';
+  const m = JSON.parse(fs.readFileSync(path.join(idx.dir, 'index.json'), 'utf8'));
+  const want = FIX.elements.filter(ruleMatch);
+  assert(m.places === want.length, `index has ${m.places} places, rules match ${want.length}`);
+  const got = [];
+  for (const k of Object.keys(m.cells)) for (const [t, id, lat, lon, tags] of JSON.parse(fs.readFileSync(path.join(idx.dir, 'c', k + '.json'), 'utf8')).els) {
+    assert(`${Math.floor(lat / m.grid)}_${Math.floor(lon / m.grid)}` === k, `place ${id} filed in the wrong cell ${k}`);
+    got.push(id);
+    assert(tags.name && !('nysgissam:nysaddresspointid' in tags), `tags not trimmed for ${id}`);
+  }
+  assert(JSON.stringify(got.sort((a, b) => a - b)) === JSON.stringify(want.map(e => e.id).sort((a, b) => a - b)), `place ids differ: ${got}`);
+  assert(!got.includes(25) && !got.includes(17), 'unnamed place or a protected area without a Wikipedia link slipped in');
+  assert(m.covered.length > 0 && m.covered.every(k => { const [y, x] = k.split('_').map(Number); return y * m.grid >= 42.5 && (y + 1) * m.grid <= 44.0 && x * m.grid >= -74.5 && (x + 1) * m.grid <= -73.0; }), 'a covered cell lies outside the coverage area');
+});
+
+test('places index: covered stretches skip Overpass; the rest still use it', async () => {
+  if (!testIndex()) return 'skipped';
+  const world = makeWorld(); world.index = 'ok';
+  const { page, ctx } = await openPage(world, { search: TROY + '&debug=1' });
+  const r = await settle(page);
+  const d = await page.evaluate(() => {
+    const L = window.__byway.scanLog.entries;
+    return { idx: L.filter(e => e.outcome === 'index').length, info: L.find(e => e.kind === 'places-index'), fails: L.filter(e => e.outcome === 'fail') };
+  });
+  const op = world.overpassCalls().length;
+  assert(d.info && d.info.region === 'us-northeast', `manifest not loaded: ${JSON.stringify(d.info)}`);
+  assert(d.idx >= 1 && op >= 1 && d.idx + op === r.chunks, `index sections ${d.idx} + Overpass ${op} ≠ ${r.chunks} sections`);
+  assert(!d.fails.length, `failures: ${JSON.stringify(d.fails)}`);
+  const n = names(r.finds);
+  for (const want of ['Fort William Henry', 'The Hyde Collection', 'Hackensack Covered Bridge', "World's Largest Garden Gnome", 'Lake Placid Olympic Museum'])
+    assert(n.includes(want), `missing ${want} (index + Overpass should together cover the route)`);
+  assert(r.failed === 0 && /Found/.test(r.status), r.status);
+  await ctx.close();
+});
+
+test('places index: CDN down → GitHub copy; index down → Overpass for everything', async () => {
+  if (!testIndex()) return 'skipped';
+  const w1 = makeWorld(); w1.index = 'cdnfail';
+  const a = await openPage(w1, { search: TROY + '&debug=1' });
+  await settle(a.page);
+  const used = await a.page.evaluate(() => window.__byway.scanLog.entries.filter(e => e.outcome === 'index').length);
+  assert(used >= 1 && w1.requests.some(q => q.kind === 'index' && q.host === 'raw.githubusercontent.com'), 'GitHub fallback for the index not used');
+  await a.ctx.close();
+  const w2 = makeWorld(); w2.index = 'fail';
+  const b = await openPage(w2, { search: TROY });
+  const r = await settle(b.page);
+  assert(w2.overpassCalls().length === r.chunks && r.failed === 0 && r.finds.some(f => f.name === 'Fort William Henry'), 'without the index every section should use Overpass');
+  await b.ctx.close();
+});
+
+test('places index: cells are saved, so a reload downloads none', async () => {
+  if (!testIndex()) return 'skipped';
+  const world = makeWorld(); world.index = 'ok';
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  const cellsFirst = world.requests.filter(q => q.kind === 'index' && q.rel.startsWith('c/')).length;
+  world.reset();
+  await page.reload();
+  await settle(page);
+  const again = world.requests.filter(q => q.kind === 'index').length;
+  assert(cellsFirst >= 1 && again === 0, `first run fetched ${cellsFirst} cells; reload fetched ${again} index files`);
+  const fx = await page.evaluate(() => window.__byway.exportFixture());
+  assert(fx.elements.some(e => e.tags.name === 'The Hyde Collection'), 'fixture export misses places that came from the index');
   await ctx.close();
 });
 

@@ -271,7 +271,7 @@ footer p{margin:6px 0}
     <footer>
       <details>
         <summary>How it works</summary>
-        <p>Routing comes from OSRM. Byway first looks up Wikipedia articles along your corridor and keeps the ones that are real stops — museums, forts, waterfalls, parks, historic sites — skipping towns, schools, offices and events. Then it asks OpenStreetMap (through the Overpass API) for smaller spots too: viewpoints, covered bridges, public art and roadside oddities. Wikipedia places get a description and photo.</p>
+        <p>Routing comes from OSRM. Byway first looks up Wikipedia articles along your corridor and keeps the ones that are real stops — museums, forts, waterfalls, parks, historic sites — skipping towns, schools, offices and events. Then it adds smaller spots from OpenStreetMap — viewpoints, covered bridges, public art and roadside oddities — from a monthly snapshot in the Northeast US, and through the Overpass API elsewhere. Wikipedia places get a description and photo.</p>
         <p>Distances are straight-line from the route, and detour times are rough estimates. Always check hours and access before you leave the highway.</p>
       </details>
       <p>Runs entirely in your browser — no account, no tracking. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · tiles © OpenStreetMap · routing <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a> · search <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a> · descriptions Wikipedia.</p>
@@ -310,6 +310,12 @@ const CFG = {
   cacheDays: 7,           // Overpass answers are reused for a week (memory + localStorage)
   cacheMaxChars: 3500000, // localStorage budget for cached answers (~3.5 MB of the usual 5 MB)
   chunkMi: 40,
+  // Monthly OpenStreetMap snapshot for the Northeast US (built by .github/workflows/build-places.yml).
+  placesIndex: [
+    'https://cdn.jsdelivr.net/gh/nateflynn/byway@places-data/places/v1/',
+    'https://raw.githubusercontent.com/nateflynn/byway/places-data/places/v1/',
+  ],
+  placesMs: 10000,
   wikiApi: 'https://en.wikipedia.org/w/api.php',
   wikiRadiusM: 10000,    // Wikipedia geosearch maximum
   wikiLimit: 150,        // articles per lookup point
@@ -801,19 +807,25 @@ async function getRoute(coords, signal) {
   throw lastErr || new Error('routing failed');
 }
 
+// The OpenStreetMap places Byway looks for. One list drives both the live Overpass query and the
+// monthly places index (tools/build_places.py reads this block between the markers), so they can't drift.
+// t: object types (nwr = any, way = ways only) · k/v: tag key and accepted values · need: tags that must be present.
+const OSM_RULES = /*OSM_RULES*/[
+  { "t": "nwr", "k": "tourism", "v": ["attraction", "museum", "artwork", "viewpoint", "gallery", "zoo", "aquarium", "theme_park"], "need": ["name"] },
+  { "t": "nwr", "k": "historic", "v": ["castle", "fort", "battlefield", "ship", "aircraft", "locomotive", "railway_car", "monument", "archaeological_site", "wreck", "tank", "mine", "ruins", "city_gate", "lighthouse", "manor", "tower", "cannon"], "need": ["name"] },
+  { "t": "nwr", "k": "historic", "v": ["memorial", "building", "house", "church", "wayside_cross", "milestone", "boundary_stone", "tomb"], "need": ["name", "wikipedia"] },
+  { "t": "nwr", "k": "man_made", "v": ["lighthouse", "windmill", "watermill", "observatory", "obelisk"], "need": ["name"] },
+  { "t": "nwr", "k": "man_made", "v": ["water_tower", "tower", "bridge"], "need": ["name", "wikipedia"] },
+  { "t": "nwr", "k": "natural", "v": ["waterfall", "cave_entrance", "arch", "hot_spring", "geyser"], "need": ["name"] },
+  { "t": "nwr", "k": "waterway", "v": ["waterfall"], "need": ["name"] },
+  { "t": "way", "k": "bridge", "v": ["covered"], "need": ["name"] },
+  { "t": "nwr", "k": "leisure", "v": ["park", "nature_reserve", "garden"], "need": ["name", "wikipedia"] },
+  { "t": "nwr", "k": "boundary", "v": ["national_park", "protected_area"], "need": ["name", "wikipedia"] }
+]/*END_OSM_RULES*/;
 function overpassQuery(poly, rM) {
   const A = `(around:${rM},${poly})`;
   return `[out:json][timeout:100];(` +
-    `nwr${A}[tourism~"^(attraction|museum|artwork|viewpoint|gallery|zoo|aquarium|theme_park)$"][name];` +
-    `nwr${A}[historic~"^(castle|fort|battlefield|ship|aircraft|locomotive|railway_car|monument|archaeological_site|wreck|tank|mine|ruins|city_gate|lighthouse|manor|tower|cannon)$"][name];` +
-    `nwr${A}[historic~"^(memorial|building|house|church|wayside_cross|milestone|boundary_stone|tomb)$"][name][wikipedia];` +
-    `nwr${A}[man_made~"^(lighthouse|windmill|watermill|observatory|obelisk)$"][name];` +
-    `nwr${A}[man_made~"^(water_tower|tower|bridge)$"][name][wikipedia];` +
-    `nwr${A}[natural~"^(waterfall|cave_entrance|arch|hot_spring|geyser)$"][name];` +
-    `nwr${A}[waterway=waterfall][name];` +
-    `way${A}[bridge=covered][name];` +
-    `nwr${A}[leisure~"^(park|nature_reserve|garden)$"][name][wikipedia];` +
-    `nwr${A}[boundary~"^(national_park|protected_area)$"][name][wikipedia];` +
+    OSM_RULES.map(r => `${r.t}${A}[${r.k}${r.v.length === 1 ? '=' + r.v[0] : `~"^(${r.v.join('|')})$"`}]${r.need.map(k => `[${k}]`).join('')};`).join('') +
     `);out tags center qt;`;
 }
 /* ---- Scan log (shown with ?debug=1) ----
@@ -981,6 +993,81 @@ function wikiTags(wt) {
   return { tags: { ...m.tags, name: wt.name, wikipedia: wt.wikipedia, wikidata: wt.wikidata, description: wt.wpdesc || undefined }, adj: m.adj };
 }
 
+/* ---- Places index ----
+   Where the monthly snapshot covers the road, OpenStreetMap places come from small static files on a
+   CDN instead of the public Overpass servers: instant, and unaffected when Overpass is overloaded. */
+let placesManifest = null;
+async function placesFetch(path, signal) {
+  let lastErr;
+  for (const base of CFG.placesIndex) {
+    try { return await fetchJSON(base + path, {}, CFG.placesMs, signal); }
+    catch (e) { if (signal && signal.aborted) throw e; lastErr = e; }
+  }
+  throw lastErr;
+}
+async function loadPlacesManifest(signal) {
+  if (placesManifest) return placesManifest;
+  const saved = store.get('placesManifest', null);
+  let m = saved && Date.now() - saved.t < 12 * 3600e3 ? saved.m : null;
+  if (!m) {
+    try { m = await placesFetch('index.json', signal); store.set('placesManifest', { t: Date.now(), m }); }
+    catch (e) { return null; } // no index: Overpass covers everything, as before
+  }
+  m.coveredSet = new Set(m.covered || []);
+  return (placesManifest = m);
+}
+const placeCell = (lat, lon, grid) => `${Math.floor(lat / grid)}_${Math.floor(lon / grid)}`;
+// Index cells touching a section's corridor: walk the section in ~1 mi steps, padding each point.
+function sectionCells(ch, R, grid) {
+  const pad = R + 0.6, keys = new Set();
+  for (let i = 0; i < ch.pts.length; i++) {
+    const a = ch.pts[i], b = ch.pts[Math.min(i + 1, ch.pts.length - 1)];
+    const n = Math.max(1, Math.ceil(havMi(a[0], a[1], b[0], b[1])));
+    for (let k = 0; k < n; k++) {
+      const lat = a[0] + (b[0] - a[0]) * k / n, lon = a[1] + (b[1] - a[1]) * k / n;
+      const dLat = pad / MI_PER_DEG, dLon = pad / (MI_PER_DEG * Math.cos(rad(lat)));
+      for (let y = Math.floor((lat - dLat) / grid); y <= Math.floor((lat + dLat) / grid); y++)
+        for (let x = Math.floor((lon - dLon) / grid); x <= Math.floor((lon + dLon) / grid); x++) keys.add(`${y}_${x}`);
+    }
+  }
+  return [...keys];
+}
+const cellCacheKey = (m, key) => `places:${m.built}:${key}`;
+const OSM_TYPE = { n: 'node', w: 'way', r: 'relation' };
+async function placesCell(m, key, signal) {
+  if (!m.cells || !m.cells[key]) return [];
+  const hit = cacheGet(cellCacheKey(m, key));
+  if (hit) return hit.elements;
+  const j = await placesFetch(`c/${key}.json`, signal);
+  const elements = (j.els || []).map(([t, id, lat, lon, tags]) => ({ type: OSM_TYPE[t], id, lat, lon, tags }));
+  cachePut(cellCacheKey(m, key), { elements });
+  return elements;
+}
+// One section of road from the index, or null when the index doesn't fully cover it.
+async function placesSection(ch, m, signal) {
+  if (!m) return null;
+  const keys = sectionCells(ch, state.queryRadius, m.grid);
+  if (!keys.every(k => m.coveredSet.has(k))) return null;
+  const out = [];
+  for (let i = 0; i < keys.length; i += 6) (await Promise.all(keys.slice(i, i + 6).map(k => placesCell(m, k, signal)))).forEach(els => out.push(...els));
+  return { elements: out, cells: keys.length };
+}
+// OpenStreetMap places for one section: the index when it covers the section, otherwise Overpass.
+async function osmSection(ch, signal, offset, onNote, m) {
+  const tag = { sec: ch.k + 1, of: ch.n };
+  if (m) {
+    const t0 = Date.now();
+    try {
+      const j = await placesSection(ch, m, signal);
+      if (j) { logScan({ kind: 'section', ...tag, host: 'places index', outcome: 'index', s: secs(Date.now() - t0), els: j.elements.length, why: `${j.cells} cells` }); return j; }
+    } catch (e) {
+      if (signal && signal.aborted) throw e;
+      logScan({ kind: 'section', ...tag, host: 'places index', outcome: 'fail', s: secs(Date.now() - t0), why: `${e.message || e}; asking Overpass` });
+    }
+  }
+  return overpass(ch.query, signal, offset, onNote, ch);
+}
+
 /* ---- Overpass: answer cache ----
    Answers are keyed by a hash of the exact query (route section + corridor width), so a retry,
    a reload or a repeat of the same drive reuses what already came back instead of asking again. */
@@ -1097,7 +1184,7 @@ function makeChunks(route, R) {
     }
   }
   if (!chunks.length) chunks.push(pts.slice());
-  return chunks.map((c, k, all) => ({ k, n: all.length, query: overpassQuery(c.map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(','), rM) }));
+  return chunks.map((c, k, all) => ({ k, n: all.length, pts: c, query: overpassQuery(c.map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(','), rM) }));
 }
 
 /* Wikipedia / Wikidata enrichment */
@@ -1249,6 +1336,7 @@ async function run(mode = 'full') {
   try {
     setStatus({ kind: 'busy', text: 'Finding your places…' });
     let tStep = performance.now();
+    const manifestP = loadPlacesManifest(sig); // in parallel with the place lookups
     // Look up every stop at once (not one after another); remembered places return immediately.
     const need = active.filter(s => !s.coord);
     const found = await Promise.all(need.map(s => geocode(s.text, sig)));
@@ -1305,10 +1393,13 @@ async function run(mode = 'full') {
 
     // Pass 2: OpenStreetMap via Overpass — adds waterfalls, viewpoints and roadside oddities when its servers answer.
     phase = 'osm';
+    const manifest = await manifestP;
+    if (stale()) return;
     logScan({ kind: 'sections', n: chunks.length, chunkMi: CFG.chunkMi, concurrency: CFG.concurrency });
+    if (manifest) logScan({ kind: 'places-index', region: manifest.region, built: manifest.built, places: manifest.places, covered: (manifest.covered || []).length });
     progress();
     await pool(chunks, CFG.concurrency, async (ch, k) => {
-      try { const j = await overpass(ch.query, sig, k % 2, onNote, ch); if (stale()) return; ingest(j.elements || []); }
+      try { const j = await osmSection(ch, sig, k % 2, onNote, manifest); if (stale()) return; ingest(j.elements || []); }
       catch (e) { if (sig.aborted) return; console.warn('section failed', e); state.failed.push(ch); }
       done++; tick();
     });
@@ -1345,7 +1436,7 @@ async function retryFailed() {
   if (chunks.length) setBusy(false, true);
   const onNote = n => { if (n && my === state.runId) setStatus({ kind: 'busy', text: `Retrying sections · ${done} of ${chunks.length} · ${n}`, pct: done / chunks.length }); };
   await pool(chunks, 1, async ch => {
-    try { const j = await overpass(ch.query, ctl.signal, 0, onNote, ch); if (my === state.runId) ingest(j.elements || []); }
+    try { const j = await osmSection(ch, ctl.signal, 0, onNote, await loadPlacesManifest(ctl.signal)); if (my === state.runId) ingest(j.elements || []); }
     catch (e) { if (!ctl.signal.aborted) state.failed.push(ch); }
     done++;
     if (my === state.runId) setStatus({ kind: 'busy', text: `Retrying sections · ${done} of ${chunks.length}`, pct: done / chunks.length });
@@ -1805,6 +1896,10 @@ function exportFixture() {
   for (const ch of makeChunks(r, state.queryRadius || state.radius)) {
     const j = cacheGet(ch.query);
     for (const e of (j && j.elements) || []) els.set(`${e.type}/${e.id}`, e);
+    if (placesManifest) for (const key of sectionCells(ch, state.queryRadius || state.radius, placesManifest.grid)) {
+      const c = cacheGet(cellCacheKey(placesManifest, key));
+      for (const e of (c && c.elements) || []) if (project(r.idx, e.lat, e.lon, (state.queryRadius || state.radius) + 0.6)) els.set(`${e.type}/${e.id}`, e);
+    }
   }
   const wiki = new Map();
   for (const pt of wikiPoints(r, state.queryRadius || state.radius)) {
@@ -2058,7 +2153,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, sectionCells, OSM_RULES, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
