@@ -1012,10 +1012,10 @@ function wikiTags(wt) {
    Where the monthly snapshot covers the road, OpenStreetMap places come from small static files on a
    CDN instead of the public Overpass servers: instant, and unaffected when Overpass is overloaded. */
 let placesManifest = null;
-async function placesFetch(path, signal) {
+async function placesFetch(path, signal, opts = {}) {
   let lastErr;
   for (const base of CFG.placesIndex) {
-    try { return await fetchJSON(base + path, {}, CFG.placesMs, signal); }
+    try { return await fetchJSON(base + path, opts, CFG.placesMs, signal); }
     catch (e) { if (signal && signal.aborted) throw e; lastErr = e; }
   }
   throw lastErr;
@@ -1023,9 +1023,10 @@ async function placesFetch(path, signal) {
 async function loadPlacesManifest(signal) {
   if (placesManifest) return placesManifest;
   const saved = store.get('placesManifest', null);
-  let m = saved && Date.now() - saved.t < 12 * 3600e3 ? saved.m : null;
+  let m = saved && Date.now() - saved.t < 3600e3 ? saved.m : null; // reuse for an hour, then re-check
   if (!m) {
-    try { m = await placesFetch('index.json', signal); store.set('placesManifest', { t: Date.now(), m }); }
+    // no-cache: check with the CDN each time (cheap if unchanged), so a new monthly build is picked up at once.
+    try { m = await placesFetch('index.json', signal, { cache: 'no-cache' }); store.set('placesManifest', { t: Date.now(), m }); }
     catch (e) { return null; } // no index: Overpass covers everything, as before
   }
   m.coveredSet = new Set(m.covered || []);
