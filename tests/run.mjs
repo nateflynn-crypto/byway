@@ -95,6 +95,7 @@ async function handle(route, world) {
   if (/tile\.openstreetmap\.org$/.test(host)) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX });
   if (host === 'photon.komoot.io') {
     world.requests.push({ kind: 'photon', url: u.href });
+    if (world.photonDelay) await new Promise(r => setTimeout(r, world.photonDelay));
     const q = u.searchParams.get('q') || '';
     const hit = FIX.geocode[q];
     return json({ type: 'FeatureCollection', features: hit ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [hit[1], hit[0]] }, properties: { name: q.split(',')[0], state: 'New York', countrycode: 'US', osm_value: 'town' } }] : [] });
@@ -687,6 +688,26 @@ test('background: narrowing the corridor re-filters without hiding OpenStreetMap
   await page.evaluate(() => { const r = document.querySelector('#radius'); r.value = '2'; r.dispatchEvent(new Event('input', { bubbles: true })); });
   const d = await page.evaluate(() => ({ n: window.__byway.state.finds.length, status: document.querySelector('#status').textContent, bg: window.__byway.state.bg }));
   assert(d.n < before && d.bg && /checking OpenStreetMap/.test(d.status), `narrowing during background: ${JSON.stringify({ before, ...d })}`);
+  await ctx.close();
+});
+
+test('places: stops are looked up at the same time and remembered for next time', async () => {
+  const world = makeWorld();
+  world.photonDelay = 1500;
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  const first = await page.evaluate(() => window.__byway.scanLog.entries.find(e => e.kind === 'geocode'));
+  const photonFirst = world.requests.filter(r => r.kind === 'photon').length;
+  assert(photonFirst === 2, `expected 2 place lookups, got ${photonFirst}`);
+  assert(first.s < 2.6, `two 1.5 s lookups took ${first.s}s — not run at the same time`);
+  world.reset();
+  await page.reload();
+  await settle(page);
+  const second = await page.evaluate(() => window.__byway.scanLog.entries.find(e => e.kind === 'geocode'));
+  assert(world.requests.filter(r => r.kind === 'photon').length === 0, 'remembered places were looked up again');
+  assert(second.remembered === 2 && second.s < 0.5, `second run geocode: ${JSON.stringify(second)}`);
+  const recalled = await page.evaluate(() => window.__byway.recallPlace('  troy,   ny '));
+  assert(recalled && Math.abs(recalled.lat - 42.7284) < 1e-4, 'lookup key should ignore case and spacing');
   await ctx.close();
 });
 

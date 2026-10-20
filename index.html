@@ -746,8 +746,29 @@ async function photon(q, limit, signal) {
     sub: String((f.properties || {}).osm_value || '').replace(/_/g, ' '),
   })).filter(r => r.label);
 }
+/* Places already found are remembered in this browser (90 days, newest 300), so repeat drives skip
+   the lookup. Picking a suggestion from the autocomplete list is remembered too. */
+const placeKey = text => String(text).trim().toLowerCase().replace(/\s+/g, ' ');
+function rememberPlace(text, c) {
+  if (!text || !c) return;
+  const all = store.get('places', {});
+  all[placeKey(text)] = { lat: +c.lat.toFixed(6), lon: +c.lon.toFixed(6), t: Date.now() };
+  const keys = Object.keys(all);
+  if (keys.length > 300) keys.sort((a, b) => all[a].t - all[b].t).slice(0, keys.length - 300).forEach(k => delete all[k]);
+  store.set('places', all);
+}
+function recallPlace(text) {
+  const e = store.get('places', {})[placeKey(text)];
+  return e && Date.now() - e.t < 90 * 864e5 ? { lat: e.lat, lon: e.lon } : null;
+}
 async function geocode(text, signal) {
   const c = parseCoord(text); if (c) return c;
+  const known = recallPlace(text); if (known) return { ...known, remembered: true };
+  const found = await lookUpPlace(text, signal);
+  if (found) rememberPlace(text, found);
+  return found;
+}
+async function lookUpPlace(text, signal) {
   try { const r = await photon(text, 1, signal); if (r[0]) return { lat: r[0].lat, lon: r[0].lon }; }
   catch (e) { if (signal && signal.aborted) throw e; }
   try {
@@ -1228,14 +1249,15 @@ async function run(mode = 'full') {
   try {
     setStatus({ kind: 'busy', text: 'Finding your places…' });
     let tStep = performance.now();
-    for (const s of active) {
-      if (s.coord) continue;
-      const c = await geocode(s.text, sig);
-      if (stale()) return;
-      if (!c) throw new UserError(`Couldn't find “${stripCoord(s.text)}”. Try adding a state or a more specific place.`);
-      s.coord = c;
-    }
-    logScan({ kind: 'geocode', s: secs(performance.now() - tStep) });
+    // Look up every stop at once (not one after another); remembered places return immediately.
+    const need = active.filter(s => !s.coord);
+    const found = await Promise.all(need.map(s => geocode(s.text, sig)));
+    if (stale()) return;
+    need.forEach((s, i) => {
+      if (!found[i]) throw new UserError(`Couldn't find “${stripCoord(s.text)}”. Try adding a state or a more specific place.`);
+      s.coord = { lat: found[i].lat, lon: found[i].lon };
+    });
+    logScan({ kind: 'geocode', s: secs(performance.now() - tStep), places: need.length, remembered: found.filter(f => f && f.remembered).length });
     setStatus({ kind: 'busy', text: 'Drawing the drive…' });
     tStep = performance.now();
     const route = await getRoute(active.map(s => s.coord), sig);
@@ -1841,6 +1863,7 @@ function chooseAC(box, i) {
   const r = box._items && box._items[i]; if (!r) return;
   const s = stopById(box._stopId); if (!s) return;
   s.text = r.label; s.coord = { lat: r.lat, lon: r.lon };
+  rememberPlace(r.label, s.coord);
   box.previousElementSibling.value = r.label;
   hideAC(box); markDirty();
 }
@@ -2035,7 +2058,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
