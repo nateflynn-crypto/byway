@@ -278,7 +278,7 @@ footer p{margin:6px 0}
     <footer>
       <details>
         <summary>How it works</summary>
-        <p>Routing comes from OSRM. Byway first looks up Wikipedia articles along your corridor and keeps the ones that are real stops — museums, forts, waterfalls, parks, historic sites — skipping towns, schools, offices and events. Then it adds smaller spots from OpenStreetMap — viewpoints, covered bridges, public art and roadside oddities — from a monthly snapshot in the Northeast US, and through the Overpass API elsewhere. Wikipedia places get a description and photo.</p>
+        <p>Routing comes from OSRM. Byway first looks up Wikipedia articles along your corridor and keeps the ones that are real stops — museums, forts, waterfalls, parks, historic sites — skipping towns, schools, offices and events. Then it adds smaller spots from OpenStreetMap — viewpoints, covered bridges, public art and roadside oddities — from a monthly snapshot along the US East Coast, and through the Overpass API elsewhere. Wikipedia places get a description and photo.</p>
         <p>Distances are straight-line from the route, and detour times are rough estimates. Always check hours and access before you leave the highway.</p>
       </details>
       <p>Runs entirely in your browser — no account, no tracking. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · tiles © OpenStreetMap · routing <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a> · search <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a> · descriptions Wikipedia.</p>
@@ -317,7 +317,7 @@ const CFG = {
   cacheDays: 7,           // Overpass answers are reused for a week (memory + localStorage)
   cacheMaxChars: 3500000, // localStorage budget for cached answers (~3.5 MB of the usual 5 MB)
   chunkMi: 40,
-  // Monthly OpenStreetMap snapshot for the Northeast US (built by .github/workflows/build-places.yml).
+  // Monthly OpenStreetMap snapshot for the US East Coast (built by .github/workflows/build-places.yml).
   placesIndex: [
     'https://cdn.jsdelivr.net/gh/nateflynn/byway@places-data/places/v1/',
     'https://raw.githubusercontent.com/nateflynn/byway/places-data/places/v1/',

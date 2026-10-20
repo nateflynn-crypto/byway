@@ -785,6 +785,21 @@ test('places index builder: keeps exactly the rule matches, one point each, with
   assert(m.covered.length > 0 && m.covered.every(k => { const [y, x] = k.split('_').map(Number); return y * m.grid >= 42.5 && (y + 1) * m.grid <= 44.0 && x * m.grid >= -74.5 && (x + 1) * m.grid <= -73.0; }), 'a covered cell lies outside the coverage area');
 });
 
+test('places index builder: several extracts — covered area is their union', async () => {
+  if (!testIndex()) return 'skipped';
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'byway-union-'));
+  const seq = path.join(dir, 'f.geojsonseq'), a = path.join(dir, 'south.poly'), b = path.join(dir, 'north.poly'), out = path.join(dir, 'out');
+  fs.writeFileSync(seq, JSON.stringify({ type: 'Feature', geometry: { type: 'Point', coordinates: [-73.7, 43.0] }, properties: { '@type': 'node', '@id': 1, name: 'X', tourism: 'museum' } }) + '\n');
+  // The same test area as TEST_POLY, split at 43.25° into two neighbouring extracts.
+  fs.writeFileSync(a, 'south\n1\n -74.5 42.5\n -73.0 42.5\n -73.0 43.25\n -74.5 43.25\n -74.5 42.5\nEND\nEND\n');
+  fs.writeFileSync(b, 'north\n1\n -74.5 43.25\n -73.0 43.25\n -73.0 44.0\n -74.5 44.0\n -74.5 43.25\nEND\nEND\n');
+  const r = spawnSync('python3', [path.join(ROOT, 'tools', 'build_places.py'), '--geojsonseq', seq, '--poly', a, b, '--out', out, '--rules-from', path.join(ROOT, 'index.html')], { encoding: 'utf8' });
+  assert(r.status === 0, r.stderr);
+  const split = JSON.parse(fs.readFileSync(path.join(out, 'index.json'), 'utf8')).covered;
+  const whole = JSON.parse(fs.readFileSync(path.join(testIndex().dir, 'index.json'), 'utf8')).covered;
+  assert(JSON.stringify(split) === JSON.stringify(whole), `union of two extracts covers ${split.length} cells, one combined extract ${whole.length}`);
+});
+
 test('places index: covered stretches skip Overpass; the rest still use it', async () => {
   if (!testIndex()) return 'skipped';
   const world = makeWorld(); world.index = 'ok';
