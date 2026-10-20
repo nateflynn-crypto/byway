@@ -95,6 +95,26 @@ const INDEX_PREFIX = { 'cdn.jsdelivr.net': '/gh/nateflynn/byway@places-data/plac
 // Towns along the fixture route, for the fake reverse lookup.
 const TOWNS = [['Troy', 42.7284, -73.6918], ['Latham', 42.747, -73.759], ['Clifton Park', 42.8656, -73.771], ['Saratoga Springs', 43.0831, -73.7846], ['Glens Falls', 43.3095, -73.644], ['Lake George', 43.4262, -73.7123], ['Warrensburg', 43.4967, -73.7762], ['Schroon Lake', 43.73, -73.817], ['North Hudson', 43.98, -73.74], ['Keene', 44.256, -73.792], ['Lake Placid', 44.2795, -73.9799]];
 
+// An encrypted private list for tests, made with the real tool.
+let privateFixture;
+function testPrivate() {
+  if (privateFixture) return privateFixture;
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'byway-private-'));
+  const list = path.join(dir, 'list.json'), out = path.join(dir, 'places.enc.json'), tool = path.join(ROOT, 'tools', 'private_list.mjs');
+  fs.writeFileSync(list, JSON.stringify({ v: 1, source: 'test', built: '2026-10-20', places: [
+    [9001, 'Grave of Test Sam', 'A patriotic grave.', 42.7300, -73.6900, 'https://www.atlasobscura.com/places/test-grave', 'Troy, New York'],
+    [9002, 'Fort William Henry', 'A recreated colonial fort.', 43.4192, -73.7110, 'https://www.atlasobscura.com/places/fort-william-henry', 'Lake George, New York'],
+    [9003, 'Lake George Mystery Spot', 'Hear your own echo.', 43.4200, -73.7090, 'https://www.atlasobscura.com/places/lake-george-mystery-spot', 'Lake George, New York'],
+    [9004, 'Test Falls', 'A pretty waterfall.', 43.3000, -73.6500, 'https://www.atlasobscura.com/places/test-falls', 'Glens Falls, New York'],
+    [9005, 'Far Away Oddity', 'Nowhere near the road.', 41.0, -75.0, 'https://www.atlasobscura.com/places/far-away', 'Somewhere, Pennsylvania'],
+    [9006, 'Museum of Test Things', 'A small local collection.', 43.0800, -73.7850, 'https://www.atlasobscura.com/places/test-museum', 'Saratoga Springs, New York'],
+  ] }));
+  const key = spawnSync(process.execPath, [tool, 'newkey'], { encoding: 'utf8' }).stdout.trim();
+  const r = spawnSync(process.execPath, [tool, 'encrypt', '--in', list, '--key', key, '--out', out], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`private_list.mjs encrypt failed: ${r.stderr}`);
+  return (privateFixture = { key, file: out });
+}
+
 /* ---------- fake services ---------- */
 const FIX_IDS_IN_CORRIDOR = FIX.elements.map(e => e.id).filter(id => id !== 26);
 const OVERPASS_HOSTS = ['overpass-api.de', 'overpass.private.coffee', 'overpass.kumi.systems', 'maps.mail.ru'];
@@ -111,6 +131,10 @@ function makeWorld() {
 async function handle(route, world) {
   const req = route.request(), u = new URL(req.url()), host = u.hostname;
   const json = (obj, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(obj) });
+  if (host === 'byway.test' && u.pathname === '/private/places.enc.json') {
+    world.requests.push({ kind: 'private' });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: fs.readFileSync(testPrivate().file, 'utf8') });
+  }
   if (host === 'byway.test') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: HTML });
   if (host === 'cdnjs.cloudflare.com' && /leaflet.*\.js$/.test(u.pathname)) return route.fulfill({ status: 200, contentType: 'application/javascript', body: LEAFLET_JS });
   if (host === 'cdnjs.cloudflare.com' && /leaflet.*\.css$/.test(u.pathname)) return route.fulfill({ status: 200, contentType: 'text/css', body: LEAFLET_CSS });
@@ -877,6 +901,59 @@ test('oddity guides: an opened find links to Atlas Obscura at its spot and Roads
   assert(Math.abs(+ao.searchParams.get('lat') - target.lat) < 1e-3 && Math.abs(+ao.searchParams.get('lng') - target.lon) < 1e-3, `Atlas Obscura link not at the find: ${ao}`);
   assert(ra.searchParams.get('city') === 'Lake George' && ra.searchParams.get('state') === 'NY', `Roadside America link: ${ra}`);
   await ctx.close();
+});
+
+test('private list: key link unlocks it; places merge into the drive; nothing readable is stored', async () => {
+  const { key } = testPrivate();
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY + '&debug=1#key=' + key });
+  await settle(page);
+  await page.waitForFunction(() => window.__byway.state.finds.some(f => f.src === 'atlas'), null, { timeout: 10000 });
+  const d = await page.evaluate(() => {
+    const S = window.__byway.state, by = n => S.finds.filter(f => f.name === n);
+    const pick = f => f && { src: f.src, cat: f.cat, ao: f.ao, site: f.tags.website };
+    let plain = false; try { for (const k of Object.keys(localStorage)) if ((localStorage.getItem(k) || '').includes('Test Sam')) plain = true; } catch {}
+    return { hash: location.hash, stored: !!localStorage.getItem('byway.privateKey'), plain,
+      grave: pick(by('Grave of Test Sam')[0]), mystery: pick(by('Lake George Mystery Spot')[0]), falls: pick(by('Test Falls')[0]), museum: pick(by('Museum of Test Things')[0]),
+      fort: by('Fort William Henry').map(pick), far: by('Far Away Oddity').length,
+      log: window.__byway.scanLog.entries.find(e => e.kind === 'private') };
+  });
+  assert(d.hash === '' && d.stored, `key link should be stored and removed from the address bar: ${JSON.stringify({ hash: d.hash, stored: d.stored })}`);
+  assert(!d.plain, 'the decrypted list leaked into localStorage');
+  assert(d.grave && d.grave.src === 'atlas' && d.grave.cat === 'weird' && /atlasobscura\.com\/places\/test-grave/.test(d.grave.site), `grave: ${JSON.stringify(d.grave)}`);
+  assert(d.mystery && d.mystery.cat === 'weird', `mystery spot: ${JSON.stringify(d.mystery)}`);
+  assert(d.falls && d.falls.cat === 'nature' && d.museum && d.museum.cat === 'museum', `typing: ${JSON.stringify({ falls: d.falls, museum: d.museum })}`);
+  assert(d.far === 0, 'a private place far from the route was included');
+  assert(d.fort.length === 1 && d.fort[0].src === 'osm' && /fort-william-henry/.test(d.fort[0].ao || ''), `Fort William Henry should merge into the OpenStreetMap find: ${JSON.stringify(d.fort)}`);
+  assert(d.log && d.log.places === 6 && d.log.nearRoute >= 5, `log: ${JSON.stringify(d.log)}`);
+  // still unlocked after a reload without the key in the link
+  await page.goto(BASE + TROY);
+  await settle(page);
+  await page.waitForFunction(() => window.__byway.state.finds.some(f => f.src === 'atlas'), null, { timeout: 10000 });
+  // #key=forget locks it again
+  await page.goto(BASE + TROY + '#key=forget');
+  await settle(page);
+  const after = await page.evaluate(() => ({ stored: !!localStorage.getItem('byway.privateKey'), atlas: window.__byway.state.finds.filter(f => f.src === 'atlas').length }));
+  assert(!after.stored && after.atlas === 0, `forget link: ${JSON.stringify(after)}`);
+  await ctx.close();
+});
+
+test('private list: no key → never fetched; wrong key → ignored and logged', async () => {
+  testPrivate();
+  const w1 = makeWorld();
+  const a = await openPage(w1, { search: TROY });
+  await settle(a.page);
+  assert(!w1.requests.some(q => q.kind === 'private'), 'private list fetched without a key');
+  await a.ctx.close();
+  const w2 = makeWorld();
+  const wrong = 'A'.repeat(43);
+  const b = await openPage(w2, { search: TROY + '&debug=1#key=' + wrong });
+  const r = await settle(b.page);
+  await b.page.waitForTimeout(500);
+  const d = await b.page.evaluate(() => ({ atlas: window.__byway.state.finds.filter(f => f.src === 'atlas').length, log: window.__byway.scanLog.entries.find(e => e.kind === 'private') }));
+  assert(d.atlas === 0 && d.log && /wrong or outdated key/.test(d.log.error), `wrong key: ${JSON.stringify(d)}`);
+  assert(/Found/.test(r.status), `scan should still finish normally: ${r.status}`);
+  await b.ctx.close();
 });
 
 // BYWAY_DEBUG=1 node tests/run.mjs debug  → prints every find with score and shortlist mark, for tuning.

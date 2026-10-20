@@ -323,6 +323,7 @@ const CFG = {
     'https://raw.githubusercontent.com/nateflynn/byway/places-data/places/v1/',
   ],
   placesMs: 10000,
+  privateList: 'private/places.enc.json', // encrypted; readable only in browsers that opened the key link
   wikiApi: 'https://en.wikipedia.org/w/api.php',
   wikiRadiusM: 10000,    // Wikipedia geosearch maximum
   wikiLimit: 150,        // articles per lookup point
@@ -1283,10 +1284,11 @@ function ingest(els) {
   for (const el of els) {
     const id = `${el.type}/${el.id}`;
     if (state.raw.has(id)) continue;
-    const isWP = el.type === 'wp';
+    const isWP = el.type === 'wp', isAO = el.type === 'ao';
     let t = el.tags || {}, adj = 0;
-    const keys = wikiKeys(t);
-    if (isWP) {
+    const keys = isAO ? [] : wikiKeys(t);
+    if (isAO) { t = privateTags(t); adj = 2; } // hand-picked by people who look for curiosities
+    else if (isWP) {
       if (keys.some(k => state.wikiIdx.has(k))) continue; // already known, from either source
       const m = wikiTags(t); if (!m) continue;
       t = m.tags; adj = m.adj || 0;
@@ -1308,9 +1310,10 @@ function ingest(els) {
     if (lat == null || lon == null) continue;
     const p = project(state.route.idx, lat, lon, R);
     if (!p) continue;
-    const { cat, base } = classify(t, name);
+    let { cat, base } = classify(t, name);
+    if (isAO && cat === 'attraction') cat = 'weird';
     state.raw.set(id, {
-      id, type: el.type, osmId: isWP ? null : el.id, src: isWP ? 'wikipedia' : 'osm', name, lat, lon, tags: t, cat, base: base + adj, off: p.off, along: p.along, score: 0,
+      id, type: el.type, osmId: isWP || isAO ? null : el.id, src: isWP ? 'wikipedia' : isAO ? 'atlas' : 'osm', name, lat, lon, tags: t, cat, base: base + adj, off: p.off, along: p.along, score: 0,
       nkey: normName(name), wiki: wikiRef(t), wd: /^Q\d+$/.test(t.wikidata || '') ? t.wikidata : null, info: undefined,
     });
     for (const k of keys) state.wikiIdx.set(k, id);
@@ -1325,8 +1328,16 @@ function reproject() {
 function recompute() {
   if (!state.route) { state.finds = []; state.visible = []; state.lensTotal = 0; state.shortlist = []; state.shortNum = new Map(); return; }
   const within = [];
-  for (const f of state.raw.values()) if (f.off <= state.radius) { f.score = f.base - 0.22 * f.off; within.push(f); }
+  const priv = [];
+  for (const f of state.raw.values()) if (f.off <= state.radius) { f.score = f.base - 0.22 * f.off; f.ao = null; (f.src === 'atlas' ? priv : within).push(f); }
   state.finds = dedupe(within);
+  // A private-list place that matches a find already on the list is merged into it (link + a boost)
+  // instead of showing twice.
+  for (const a of priv) {
+    const m = state.finds.find(f => sameNamedPlace(a, f));
+    if (m) { m.ao = a.tags.website; m.score += 1.5; if (state.picks.delete(a.id)) state.picks.add(m.id); }
+    else state.finds.push(a);
+  }
   // Category and corridor filters see every find; only then is the list trimmed to the best CFG.maxFinds.
   const inLens = state.lens === 'all' ? state.finds : state.finds.filter(f => f.cat === state.lens);
   state.lensTotal = inLens.length;
@@ -1351,6 +1362,7 @@ async function run(mode = 'full') {
     setStatus({ kind: 'busy', text: 'Finding your places…' });
     let tStep = performance.now();
     const manifestP = loadPlacesManifest(sig); // in parallel with the place lookups
+    const privateListP = loadPrivateList();
     // Look up every stop at once (not one after another); remembered places return immediately.
     const need = active.filter(s => !s.coord);
     const found = await Promise.all(need.map(s => geocode(s.text, sig)));
@@ -1380,6 +1392,13 @@ async function run(mode = 'full') {
     state.raw = new Map(); state.wikiIdx = new Map(); state.guidesOpen = false; state.picks.clear(); state.selectedId = null; state.view = 'shortlist';
     state.allLimit = 150; state.failed = []; state.failedWiki = []; state.queryRadius = state.radius;
     recompute(); render();
+
+    privateListP.then(list => {
+      if (!list || stale()) return;
+      const els = privateElements(list, route, state.queryRadius);
+      ingest(els); recompute(); render();
+      logScan({ kind: 'private', places: list.places.length, nearRoute: els.length, finds: [...state.raw.values()].filter(f => f.src === 'atlas').length });
+    });
 
     // Pass 1: Wikipedia — quick and dependable; finds the notable places.
     const wpts = wikiPoints(route, state.radius);
@@ -1632,7 +1651,7 @@ function cardHTML(f) {
     <div class="num" style="--c:${c.color}">${n != null ? n : c.emoji}</div>
     <div class="cbody">
       <h3>${esc(f.name)}</h3>
-      <div class="meta">${c.emoji} ${c.label} · mile ${Math.round(f.along).toLocaleString()} · ${offText(f.off)}</div>
+      <div class="meta">${c.emoji} ${c.label} · mile ${Math.round(f.along).toLocaleString()} · ${offText(f.off)}${f.src === 'atlas' || f.ao ? ' · Atlas Obscura' : ''}</div>
       ${sub ? `<div class="sub">${esc(cap(sub))}</div>` : ''}
       ${snip ? `<p class="snip">${esc(snip)}</p>` : ''}
       ${sel ? detailsHTML(f) : ''}
@@ -1648,8 +1667,10 @@ function linksHTML(f) {
   out.push(`<a href="https://maps.apple.com/?daddr=${f.lat},${f.lon}&q=${encodeURIComponent(f.name)}" target="_blank" rel="noopener">Apple Maps ↗</a>`);
   out.push(`<a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}" target="_blank" rel="noopener">Google Maps ↗</a>`);
   if (f.wiki) out.push(`<a href="${esc(wikiURL(f.wiki))}" target="_blank" rel="noopener">Wikipedia ↗</a>`);
-  const site = website(t); if (site) out.push(`<a href="${esc(site)}" target="_blank" rel="noopener">Website ↗</a>`);
-  if (f.src !== 'wikipedia') out.push(`<a href="https://www.openstreetmap.org/${f.type}/${f.osmId}" target="_blank" rel="noopener">OSM ↗</a>`);
+  const page = f.src === 'atlas' ? t.website : f.ao;
+  if (page) out.push(`<a href="${esc(page)}" target="_blank" rel="noopener">Atlas Obscura page ↗</a>`);
+  const site = f.src === 'atlas' ? null : website(t); if (site) out.push(`<a href="${esc(site)}" target="_blank" rel="noopener">Website ↗</a>`);
+  if (f.src === 'osm') out.push(`<a href="https://www.openstreetmap.org/${f.type}/${f.osmId}" target="_blank" rel="noopener">OSM ↗</a>`);
   out.push(guideLinksHTML(f.lat, f.lon, f.town));
   return out.join('');
 }
@@ -1733,7 +1754,7 @@ function popupHTML(f) {
       <button type="button" data-action="add-stop">＋ Route</button>
       <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}" target="_blank" rel="noopener">Directions ↗</a>
       ${f.wiki ? `<a href="${esc(wikiURL(f.wiki))}" target="_blank" rel="noopener">Wiki ↗</a>` : ''}
-      <a href="${esc(atlasURL(f.lat, f.lon))}" target="_blank" rel="noopener">Atlas Obscura ↗</a>
+      <a href="${esc(f.src === 'atlas' ? f.tags.website : f.ao || atlasURL(f.lat, f.lon))}" target="_blank" rel="noopener">Atlas Obscura ↗</a>
     </div>
   </div>`;
 }
@@ -1806,6 +1827,65 @@ function togglePick(id) {
   if (adding && parts > partsBefore && parts > 1) toast(`Google Maps takes ${CFG.stopsPerLink} stops per link, so this drive now opens in ${parts} parts.`);
   const f = state.raw.get(id);
   if (f && f.info === undefined && (f.wiki || f.wd)) enrich([f]).then(() => updateCard(id));
+}
+
+/* ================= private list =================
+   A personal list of places (e.g. an Atlas Obscura export) kept in the repo only in encrypted form.
+   Opening https://…/byway/#key=… once stores the key in this browser (and removes it from the
+   address bar); #key=forget removes it. The list is decrypted in the browser and never stored in
+   plain form. Places on it are merged into each drive. */
+let privateP = null;
+function readKeyFromLink() {
+  const m = /(?:^|[#&])key=([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (!m) return;
+  if (m[1] === 'forget') { try { localStorage.removeItem('byway.privateKey'); } catch {} privateP = null; toast('Private list removed from this browser'); }
+  else { store.set('privateKey', m[1]); privateP = null; toast('Private list unlocked in this browser'); }
+  try { history.replaceState(null, '', location.href.split('#')[0]); } catch {}
+}
+const fromB64 = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); s += '='.repeat((4 - s.length % 4) % 4); return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
+function loadPrivateList() {
+  const k = store.get('privateKey', null);
+  if (!k) return Promise.resolve(null);
+  if (privateP) return privateP;
+  privateP = (async () => {
+    try {
+      const key = await crypto.subtle.importKey('raw', fromB64(k), 'AES-GCM', false, ['decrypt']);
+      const f = await fetchJSON(CFG.privateList, { cache: 'no-cache' }, 20000);
+      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(f.iv) }, key, fromB64(f.ct));
+      const list = JSON.parse(await new Response(new Blob([pt]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+      return list && Array.isArray(list.places) ? list : null;
+    } catch (e) {
+      privateP = null; // try again next drive
+      logScan({ kind: 'private', error: e && e.name === 'OperationError' ? 'wrong or outdated key' : String((e && e.message) || e) });
+      return null;
+    }
+  })();
+  return privateP;
+}
+// Places from the private list near this route, as elements for ingest().
+function privateElements(list, route, R) {
+  let s = 90, w = 180, n = -90, e = -180;
+  for (const [la, lo] of route.pts) { s = Math.min(s, la); n = Math.max(n, la); w = Math.min(w, lo); e = Math.max(e, lo); }
+  const pad = (R + 1) / MI_PER_DEG, padLon = pad / Math.cos(rad((s + n) / 2));
+  return list.places.filter(p => p[3] >= s - pad && p[3] <= n + pad && p[4] >= w - padLon && p[4] <= e + padLon)
+    .map(([id, name, sub, lat, lon, url, town]) => ({ type: 'ao', id, lat, lon, tags: { name, description: sub || undefined, website: url, 'addr:place': town } }));
+}
+// Typing for private-list places: museums and natural features keep their category; the rest are curiosities.
+function privateTags(t) {
+  const n = t.name.toLowerCase(), out = { name: t.name, description: t.description, website: t.website, tourism: 'attraction' };
+  if (/\bmuseum\b/.test(n)) out.tourism = 'museum';
+  else if (WEIRD_RE.test(`${t.name} ${t.description || ''}`)) {} // "Lake George Mystery Spot" is a curiosity, not a lake
+  else if (/^(mount|mt\.?|lake)\b|\b(mountain|lake|falls|waterfall|gorge|chasm|cave|caverns?|pond|spring|tufa|notch|peak|island|beach|swamp|bog)$/.test(n)) { delete out.tourism; out.natural = 'feature'; }
+  return out;
+}
+const STOPWORDS = new Set(['and', 'the', 'of', 'at', 'in', 'on', 'for', 'site', 'park', 'state', 'historic', 'national', 'new', 'york']);
+const nameTokens = k => k.split(' ').filter(w => w.length > 2 && !STOPWORDS.has(w));
+function sameNamedPlace(a, b) {
+  if (a.nkey === b.nkey) return havMi(a.lat, a.lon, b.lat, b.lon) < 1;
+  if (havMi(a.lat, a.lon, b.lat, b.lon) > 0.35) return false;
+  const A = nameTokens(a.nkey), B = new Set(nameTokens(b.nkey));
+  if (!A.length || !B.size) return false;
+  return A.filter(w => B.has(w)).length / Math.min(A.length, B.size) >= 0.6;
 }
 
 /* ================= oddity guides (links out) =================
@@ -2234,6 +2314,7 @@ function init() {
   findLayer = L.layerGroup().addTo(map);
   pickLayer = L.layerGroup().addTo(map);
 
+  readKeyFromLink();
   const p = new URLSearchParams(location.search);
   const from = p.get('from'), to = p.get('to'), vias = p.getAll('via');
   state.radius = clamp(Math.round(+p.get('r')) || 5, 1, 15);
@@ -2245,7 +2326,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, sectionCells, OSM_RULES, guidePoints, townOf, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, sectionCells, OSM_RULES, guidePoints, townOf, loadPrivateList, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();

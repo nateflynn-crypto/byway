@@ -29,6 +29,12 @@ Inside New York, Pennsylvania, New Jersey and New England, OpenStreetMap places 
 
 The app loads `index.json` while it looks up your stops. Any stretch of road whose corridor lies wholly inside covered squares reads those squares, which are saved in the browser. Everything else uses Overpass, as does any stretch whose squares fail to load. To cover more states, change `REGION` in the workflow (any Geofabrik region with a `.poly` file works).
 
+### Private list
+
+`private/places.enc.json` is a personal list of places (currently an Atlas Obscura export for the East Coast, Maine to Florida) encrypted with AES-256-GCM. It's public on GitHub but unreadable without the key. Opening a Byway link ending in `#key=…` once stores the key in that browser and removes it from the address bar; `#key=forget` removes it. With a key, Byway downloads and decrypts the list in the browser on each visit (it never stores it unencrypted). Places near the route join the finds, and places that match an existing find are merged into it. Without a key, nothing changes.
+
+To rebuild or re-key it, use `tools/private_list.mjs` (`newkey`, `atlas`, `encrypt`, `decrypt`). Keep plain lists and keys out of the repo; `.gitignore` blocks them.
+
 Route links keep the trip in the address (`?from=…&via=…&to=…`), so a link reopens the same drive.
 
 Distances are straight-line from the route and detour times are rough estimates — check hours and access before leaving the highway.
