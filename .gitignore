@@ -1,0 +1,4 @@
+# Only the encrypted list belongs in private/. Plain lists and keys stay off GitHub.
+private/*
+!private/places.enc.json
+*.key
