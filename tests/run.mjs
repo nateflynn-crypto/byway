@@ -224,6 +224,16 @@ test('classify: heritage, shop-like gallery, bare viewpoint, weird', async () =>
       generic: c({ tourism: 'viewpoint' }, 'Scenic Overlook'),
       gnome: c({ tourism: 'attraction' }, "World's Largest Garden Gnome"),
       giantView: c({ tourism: 'viewpoint' }, 'Giant Washbowl Overlook'),
+      // from a measured pass over the Northeast index
+      mermaid: c({ tourism: 'artwork', artwork_type: 'statue' }, 'Nerida, Eastport Mermaid'),
+      totem: c({ tourism: 'artwork', artwork_type: 'installation' }, 'Indian Steps Totem Pole'),
+      garden: c({ tourism: 'artwork', artwork_type: 'sculpture' }, "Mr. Imagination's Sculpture Garden"),
+      milk: c({ tourism: 'attraction' }, 'Hood Milk Bottle'),
+      haunt: c({ tourism: 'attraction', attraction: 'haunted_house' }, 'Halls of Horror'),
+      wheel: c({ tourism: 'attraction', attraction: 'big_wheel' }, 'Giant Wheel'),
+      coaster: c({ tourism: 'attraction', attraction: 'roller_coaster', wikipedia: 'en:El Toro (Six Flags Great Adventure)' }, 'El Toro'),
+      lighthouse: c({ man_made: 'lighthouse', description: 'White house and tower on brown square skeleton framework.' }, 'Gloucester Breakwater Light'),
+      bigBen: c({ tourism: 'artwork' }, 'Big Ben'),
       giantPeak: c({ natural: 'peak' }, 'Giant Mountain'),
       priv: c({ historic: 'ruins', access: 'private' }, 'Private Ruins'),
     };
@@ -236,6 +246,9 @@ test('classify: heritage, shop-like gallery, bare viewpoint, weird', async () =>
   assert(r.gnome.cat === 'weird', `gnome → ${r.gnome.cat}`);
   assert(r.giantView.cat === 'nature' && Math.abs(r.giantView.base - 0.5) < 1e-9, `"Giant" viewpoint → ${JSON.stringify(r.giantView)}`);
   assert(r.giantPeak.cat === 'nature', `"Giant" peak → ${r.giantPeak.cat}`);
+  for (const k of ['mermaid', 'totem', 'garden', 'milk', 'haunt']) assert(r[k].cat === 'weird', `${k} should be an Oddity: ${JSON.stringify(r[k])}`);
+  for (const k of ['wheel', 'coaster', 'lighthouse', 'bigBen']) assert(r[k].cat !== 'weird', `${k} should not be an Oddity: ${JSON.stringify(r[k])}`);
+  assert(r.wheel.base < 0 && r.coaster.base < 2, `rides inside parks should score low: wheel ${r.wheel.base}, coaster ${r.coaster.base}`);
   assert(r.priv.base < 0, `private → ${r.priv.base}`);
   await ctx.close();
 });
