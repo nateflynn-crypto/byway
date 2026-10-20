@@ -1,0 +1,40 @@
+{
+  "_note": "Synthetic test data shaped like Troy, NY -> Lake Placid, NY. Route waypoints and place coordinates are approximate; tags for John Brown Farm, The Curious Otter, Valley View Ledge, Cliffside Coaster and Sentinel Range Wilderness are copied from a live Overpass answer (2026-10-19). Other places, including the gnome, exist only to exercise scoring rules.",
+  "geocode": {
+    "Troy, NY": [42.7284, -73.6918],
+    "Lake Placid, NY": [44.2795, -73.9799]
+  },
+  "waypoints": [
+    [42.7284, -73.6918], [42.7470, -73.7590], [42.8656, -73.7710], [43.0831, -73.7846],
+    [43.3095, -73.6440], [43.4262, -73.7123], [43.4967, -73.7762], [43.7300, -73.8170],
+    [43.9800, -73.7400], [44.2560, -73.7920], [44.2795, -73.9799]
+  ],
+  "elements": [
+    { "type": "node", "id": 1, "lat": 42.7120, "lon": -73.6980, "tags": { "name": "Burden Iron Works Museum", "tourism": "museum", "wikipedia": "en:Burden Iron Works" } },
+    { "type": "node", "id": 2, "lat": 42.7310, "lon": -73.6870, "tags": { "name": "Rensselaer County Historical Society", "tourism": "museum", "website": "https://example.org" } },
+    { "type": "node", "id": 3, "lat": 42.7500, "lon": -73.7650, "tags": { "name": "Scenic Overlook", "tourism": "viewpoint" } },
+    { "type": "node", "id": 4, "lat": 42.9500, "lon": -73.7800, "tags": { "name": "Saratoga Battle Historical Marker", "tourism": "attraction" } },
+    { "type": "node", "id": 5, "lat": 43.0817, "lon": -73.7746, "tags": { "name": "National Museum of Racing and Hall of Fame", "tourism": "museum", "wikipedia": "en:National Museum of Racing and Hall of Fame", "website": "https://example.org" } },
+    { "type": "way", "id": 6, "center": { "lat": 43.0595, "lon": -73.8034 }, "tags": { "name": "Saratoga Spa State Park", "leisure": "park", "wikipedia": "en:Saratoga Spa State Park" } },
+    { "type": "node", "id": 7, "lat": 43.1500, "lon": -73.7500, "tags": { "name": "Private Ruins", "historic": "ruins", "access": "private" } },
+    { "type": "node", "id": 8, "lat": 43.3097, "lon": -73.6489, "tags": { "name": "The Hyde Collection", "tourism": "museum", "wikipedia": "en:The Hyde Collection" } },
+    { "type": "way", "id": 9, "center": { "lat": 43.4189, "lon": -73.7108 }, "tags": { "name": "Fort William Henry", "historic": "fort", "wikipedia": "en:Fort William Henry" } },
+    { "type": "node", "id": 10, "lat": 43.4300, "lon": -73.7150, "tags": { "name": "World's Largest Garden Gnome", "tourism": "attraction" } },
+    { "type": "node", "id": 11, "lat": 43.3730, "lon": -73.6970, "tags": { "name": "Magic Forest", "tourism": "theme_park", "wikidata": "Q6731218" } },
+    { "type": "way", "id": 12, "center": { "lat": 43.5000, "lon": -73.7800 }, "tags": { "name": "Hackensack Covered Bridge", "bridge": "covered", "highway": "footway" } },
+    { "type": "node", "id": 13, "lat": 43.7530, "lon": -73.8240, "tags": { "name": "Natural Stone Bridge and Caves", "tourism": "attraction", "website": "https://example.org" } },
+    { "type": "node", "id": 14, "lat": 43.8500, "lon": -73.7800, "tags": { "name": "Mural", "tourism": "artwork", "artwork_type": "mural" } },
+    { "type": "node", "id": 15, "lat": 44.2500, "lon": -73.7400, "tags": { "name": "Keene Valley Lookout", "tourism": "viewpoint", "website": "https://example.org" } },
+    { "type": "node", "id": 16, "lat": 44.2600, "lon": -73.7950, "tags": { "name": "Hulls Falls", "waterway": "waterfall" } },
+    { "type": "relation", "id": 17, "center": { "lat": 44.2560, "lon": -73.9710 }, "tags": { "name": "John Brown Farm State Historic Site", "boundary": "protected_area", "heritage": "2", "heritage:operator": "nhl", "ref:nhl": "72000840", "protection_object": "heritage", "protection_title": "State Historic Site", "ownership": "state" } },
+    { "type": "node", "id": 18, "lat": 44.2850, "lon": -73.9850, "tags": { "name": "Lake Placid Olympic Museum", "tourism": "museum", "wikipedia": "en:Lake Placid Olympic Museum" } },
+    { "type": "node", "id": 19, "lat": 44.2860, "lon": -73.9830, "tags": { "name": "Lake Placid Olympic Museum", "tourism": "museum" } },
+    { "type": "way", "id": 20, "center": { "lat": 44.2800, "lon": -73.9780 }, "tags": { "name": "The Curious Otter", "tourism": "gallery", "building": "yes" } },
+    { "type": "node", "id": 21, "lat": 44.2610, "lon": -73.8100, "tags": { "name": "Valley View Ledge", "tourism": "viewpoint" } },
+    { "type": "node", "id": 22, "lat": 44.2160, "lon": -73.9220, "tags": { "name": "Cliffside Coaster", "tourism": "attraction", "attraction": "roller_coaster", "website": "https://example.org" } },
+    { "type": "relation", "id": 23, "center": { "lat": 44.2500, "lon": -73.8700 }, "tags": { "name": "Sentinel Range Wilderness", "boundary": "protected_area", "wikipedia": "en:Sentinel Range Wilderness" } },
+    { "type": "node", "id": 24, "lat": 44.2830, "lon": -73.9810, "tags": { "name": "Olympic Center", "tourism": "attraction", "wikipedia": "en:Olympic Center (Lake Placid)" } },
+    { "type": "node", "id": 25, "lat": 43.6000, "lon": -73.8000, "tags": { "tourism": "attraction" } },
+    { "type": "node", "id": 26, "lat": 43.0000, "lon": -73.3000, "tags": { "name": "Far Away Museum", "tourism": "museum", "wikipedia": "en:Nowhere" } }
+  ]
+}
