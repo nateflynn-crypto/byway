@@ -81,6 +81,7 @@ function makeWorld() {
   world.set = (h, b) => { world.behavior[h] = b; };
   world.all = b => OVERPASS_HOSTS.forEach(h => world.set(h, b));
   world.overpassCalls = () => world.requests.filter(r => r.kind === 'overpass');
+  world.wikiCalls = () => world.requests.filter(r => r.kind === 'wiki');
   world.reset = () => { world.requests = []; };
   return world;
 }
@@ -115,7 +116,17 @@ async function handle(route, world) {
     if (b === 504) return route.fulfill({ status: 504, contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: '<html><body>504 Gateway Time-out</body></html>' });
     if (b === 'xml') return route.fulfill({ status: 200, contentType: 'application/osm3s+xml', headers: { 'access-control-allow-origin': '*' }, body: '<?xml version="1.0"?><osm><remark>runtime error</remark></osm>' });
     if (b === 'remark') return json({ elements: [], remark: 'runtime error: Query timed out in "query" at line 1 after 100 seconds.' });
+    if (b === 'slowEmpty') { await new Promise(r => setTimeout(r, world.slowMs || 2600)); return json({ version: 0.6, elements: [] }); }
     return json(overpassAnswer(q, world.extra));
+  }
+  if (/\.wikipedia\.org$/.test(host) && u.searchParams.get('generator') === 'geosearch') {
+    world.requests.push({ kind: 'wiki' });
+    if (world.wiki === 'fail') return route.fulfill({ status: 503, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: 'unavailable' });
+    const [la, lo] = (u.searchParams.get('ggscoord') || '0|0').split('|').map(Number), r = +u.searchParams.get('ggsradius');
+    const pages = (FIX.wiki || []).filter(e => havM([la, lo], [e.lat, e.lon]) <= r).map(e => ({
+      pageid: e.id, ns: 0, title: e.tags.name, coordinates: [{ lat: e.lat, lon: e.lon, primary: true, globe: 'earth' }],
+      ...(e.tags.wikidata ? { pageprops: { wikibase_item: e.tags.wikidata } } : {}), ...(e.tags.wpdesc ? { description: e.tags.wpdesc, descriptionsource: 'local' } : {}) }));
+    return json(pages.length ? { batchcomplete: true, query: { pages } } : { batchcomplete: true });
   }
   if (/\.wikipedia\.org$/.test(host)) {
     const titles = (u.searchParams.get('titles') || '').split('|').filter(Boolean);
@@ -141,13 +152,14 @@ const TROY = `?from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}`;
 async function settle(page, timeout = 30000) {
   await page.waitForFunction(() => {
     const S = window.__byway && window.__byway.state, st = document.querySelector('#status');
-    return S && !S.busy && st && !st.hidden && !/Scouting|Retrying|Finding your|Drawing/.test(st.textContent);
+    return S && !S.busy && st && !st.hidden && !/Scouting|Retrying|Finding your|Drawing|Looking up|checking OpenStreetMap/.test(st.textContent);
   }, null, { timeout });
   return page.evaluate(() => {
     const S = window.__byway.state, st = document.querySelector('#status');
     return {
       status: st.textContent.trim(), kind: st.className,
-      finds: S.finds.map(f => ({ name: f.name, cat: f.cat, base: f.base, off: f.off, score: f.score, info: !!(f.info && f.info.extract) })),
+      finds: S.finds.map(f => ({ id: f.id, src: f.src, name: f.name, cat: f.cat, base: f.base, off: f.off, score: f.score, info: !!(f.info && f.info.extract) })),
+      wikiPoints: window.__byway.wikiPoints(S.route, S.queryRadius).length,
       shortlist: S.shortlist.map(f => f.name), failed: S.failed.length, raw: S.raw.size,
       chunks: window.__byway.makeChunks(S.route, S.queryRadius).length,
     };
@@ -156,7 +168,7 @@ async function settle(page, timeout = 30000) {
 // Starts a scan after shrinking timing knobs, so failure paths run in seconds, not minutes.
 async function scanWithFastTimers(page) {
   await page.evaluate(() => {
-    const C = window.__byway.CFG; if (C) { C.benchMaxWaitMs = 150; C.overpassMs = 8000; }
+    const C = window.__byway.CFG; if (C) { C.benchMaxWaitMs = 150; C.overpassMs = 3000; }
     document.querySelector('[data-action="preset"][data-i="3"]').click();
   });
   await page.waitForFunction(() => window.__byway.state.busy);
@@ -231,9 +243,10 @@ test('cache: reloading the same drive asks Overpass nothing', async () => {
   await page.reload();
   const second = await settle(page);
   assert(world.overpassCalls().length === 0, `expected 0 Overpass calls after reload, got ${world.overpassCalls().length}`);
+  assert(world.wikiCalls().length === 0, `expected 0 Wikipedia lookups after reload, got ${world.wikiCalls().length}`);
   assert(second.finds.length === first.finds.length && second.finds.length > 0, `finds ${second.finds.length} vs ${first.finds.length}`);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('byway.opidx') || '[]').length);
-  assert(stored === first.chunks, `localStorage holds ${stored} answers, expected ${first.chunks}`);
+  assert(stored === first.chunks + first.wikiPoints, `localStorage holds ${stored} answers, expected ${first.chunks} sections + ${first.wikiPoints} Wikipedia lookups`);
   await ctx.close();
 });
 
@@ -471,6 +484,7 @@ test('fixture export: captures the route and every place Overpass returned', asy
   for (const id of expected) assert(ids.has(id), `fixture missing element ${id}`);
   assert(!ids.has(26), 'fixture includes a place outside the corridor');
   assert(fx.elements.every(e => e.tags && (e.lat != null || e.center)), 'fixture elements lost coordinates or tags');
+  assert(Array.isArray(fx.wiki) && fx.wiki.some(e => e.tags.name === 'Canfield Casino and Congress Park'), 'fixture missing Wikipedia results');
   await ctx.close();
   // Replay it: the captured fixture must drive a full offline run (debug dump) on its own.
   if (process.env.BYWAY_FIXTURE) return; // no recursion
@@ -478,6 +492,153 @@ test('fixture export: captures the route and every place Overpass returned', asy
   fs.writeFileSync(tmp, JSON.stringify(fx));
   const out = spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'debug dump'], { env: { ...process.env, BYWAY_FIXTURE: tmp, BYWAY_DEBUG: '1' }, encoding: 'utf8', timeout: 120000 });
   assert(out.status === 0 && /Fort William Henry/.test(out.stdout) && /1 passed, 0 failed/.test(out.stdout), `replay of captured fixture failed:\n${out.stdout}\n${out.stderr}`);
+});
+
+test('wikipedia: lookup points cover the whole corridor at 1, 5 and 15 mi', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  const r = await page.evaluate(() => {
+    const B = window.__byway, route = B.state.route, MIPD = 69.093;
+    const out = {};
+    for (const R of [1, 5, 15]) {
+      const pts = B.wikiPoints(route, R), cum = B.cumulative(route.pts);
+      let worst = 0;
+      for (let i = 1; i < route.pts.length; i += 3) {
+        const a = route.pts[i - 1], b = route.pts[i], kx = Math.cos(a[0] * Math.PI / 180) * MIPD;
+        const dx = (b[1] - a[1]) * kx, dy = (b[0] - a[0]) * MIPD, len = Math.hypot(dx, dy) || 1;
+        for (const off of [-R, 0, R]) {
+          const lat = a[0] + (dx / len) * off / MIPD, lon = a[1] - (dy / len) * off / kx;
+          let near = Infinity;
+          for (const p of pts) near = Math.min(near, Math.hypot((p.lat - lat) * MIPD, (p.lon - lon) * kx));
+          worst = Math.max(worst, near);
+        }
+      }
+      out[R] = { n: pts.length, worst: +worst.toFixed(2), mi: Math.round(cum[cum.length - 1]) };
+    }
+    return out;
+  });
+  for (const R of [1, 5, 15]) assert(r[R].worst <= 6.2, `corridor ${R} mi: a point is ${r[R].worst} mi from the nearest lookup (limit 6.2) — ${JSON.stringify(r[R])}`);
+  // The fixture route is straight lines with sharp corners, which costs extra lookups; real roads curve gently.
+  assert(r[5].n <= Math.ceil(0.3 * r[5].mi), `too many lookups for a ${r[5].mi} mi drive at 5 mi: ${r[5].n}`);
+  assert(r[1].n < r[5].n && r[5].n < r[15].n, `lookup counts should grow with the corridor: ${r[1].n}, ${r[5].n}, ${r[15].n}`);
+  await ctx.close();
+});
+
+test('wikipedia: articles are filtered to real stops and typed sensibly', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world);
+  const r = await page.evaluate(() => {
+    const t = (name, wpdesc) => { const m = window.__byway.wikiTags({ name, wpdesc, wikipedia: 'en:' + name }); return m ? window.__byway.classify(m.tags, name).cat : null; };
+    return {
+      museum: t('Lake Placid Winter Olympic Museum', 'Museum in Lake Placid, New York'),
+      fort: t('Fort William Henry', 'Fort in Lake George, New York'),
+      site: t('John Brown Farm State Historic Site', 'State historic site in New York, United States'),
+      falls: t('Hulls Falls', 'Waterfall in Keene, New York'),
+      mountain: t('Cascade Mountain (New York)', 'Mountain in Essex County, New York'),
+      race: t('Saratoga Race Course', 'Thoroughbred horse racing venue in Saratoga Springs, New York'),
+      nodescMuseum: t('Adirondack Experience Museum', ''),
+      nodescOther: t('Natural Stone Bridge and Caves', ''),
+      postOffice: t('United States Post Office (Saratoga Springs, New York)', 'Post office building in Saratoga Springs, New York'),
+      school: t('Saratoga Springs High School', 'Public high school in Saratoga Springs, New York'),
+      battle: t('Battle of Lake George', '1755 battle of the French and Indian War'),
+      city: t('Saratoga Springs, New York', 'City in New York, United States'),
+      station: t('Lake George station', 'Former railroad station in Lake George, New York'),
+      games: t('1932 Winter Olympics', 'Multi-sport event in Lake Placid, New York'),
+      hotel: t('Grand Union Hotel', 'Demolished hotel in Saratoga Springs, New York'),
+      hamlet: t('Museum Village (New York)', 'Hamlet in Warren County, New York'),
+      // cases seen in a live Troy → Lake Placid run
+      grant: t('Grant Cottage State Historic Site', 'United States historic place'),
+      nhs: t('Kate Mullany House', 'National Historic Site of the United States'),
+      generic: t('Jonesville Cemetery', 'Historic site in Saratoga County, New York'),
+      genericPO: t('United States Post Office', 'United States historic place'),
+      abandoned: t('Heritage Park', 'Abandoned sport stadium in Colonie, New York'),
+      river: t('Poesten Kill', 'River in New York, United States'),
+      giant: t('Giant Mountain Wilderness Area', 'Wilderness area in New York, United States'),
+      home: t('A. S. Rugge House', 'Historic home in Glens Falls, New York, US'),
+      hof: t('New York State Baseball Hall of Fame', ''),
+      monument: t('Soldiers and Sailors Monument', ''),
+      casino: t('Canfield Casino and Congress Park', 'Historic casino and park in Saratoga Springs, New York'),
+      grange: t('Mohawk Valley Grange Hall', 'United States historic place'),
+    };
+  });
+  const want = { museum: 'museum', fort: 'history', site: 'history', falls: 'nature', mountain: 'nature', race: 'attraction', nodescMuseum: 'museum',
+    nodescOther: null, postOffice: null, school: null, battle: null, city: null, station: null, games: null, hotel: null, hamlet: null,
+    grant: 'history', nhs: 'history', generic: 'history', genericPO: null, abandoned: null, river: null, giant: 'nature', home: 'history', hof: 'museum', monument: 'art', casino: 'attraction', grange: 'history' };
+  for (const [k, v] of Object.entries(want)) assert(r[k] === v, `${k}: got ${r[k]}, want ${v}`);
+  const b = await page.evaluate(() => { const s = (n, d) => { const m = window.__byway.wikiTags({ name: n, wpdesc: d, wikipedia: 'en:' + n }); return window.__byway.classify(m.tags, n).base + (m.adj || 0); };
+    return { cemetery: s('Jonesville Cemetery', 'Historic site in Saratoga County, New York'), grant: s('Grant Cottage State Historic Site', 'United States historic place'), stadium: s('Joseph L. Bruno Stadium', 'Baseball stadium in Troy, New York'), stateFort: s('Fort William Henry', 'Fort in Lake George, New York') }; });
+  assert(b.cemetery < 2.5 && b.stadium < 3 && b.grant > 5 && b.stateFort > 5, `scores off: ${JSON.stringify(b)}`);
+  await ctx.close();
+});
+
+test('wikipedia + OpenStreetMap: merged without duplicates, junk dropped, names cleaned', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY });
+  const r = await settle(page);
+  const n = names(r.finds), by = Object.fromEntries(r.finds.map(f => [f.name, f]));
+  assert(world.wikiCalls().length === r.wikiPoints, `${world.wikiCalls().length} Wikipedia lookups for ${r.wikiPoints} points`);
+  for (const want of ['Canfield Casino and Congress Park', 'Saratoga Race Course', 'Cascade Mountain', 'Lake Placid Olympic Ski Jumping Complex'])
+    assert(n.includes(want), `missing Wikipedia find: ${want}`);
+  for (const junk of ['United States Post Office', 'Saratoga Springs High School', 'Battle of Lake George', 'Saratoga Springs, New York', 'Lake George station', '1932 Winter Olympics', 'Grand Union Hotel', 'Museum Village', 'Far Away Lighthouse'])
+    assert(!n.some(x => x.startsWith(junk)), `junk from Wikipedia kept: ${junk}`);
+  assert(n.filter(x => x === 'Fort William Henry').length === 1 && by['Fort William Henry'].src === 'osm', 'Fort William Henry should appear once, from OpenStreetMap');
+  assert(!n.includes('Lake Placid Winter Olympic Museum') && n.includes('Lake Placid Olympic Museum'), 'same Wikidata ID should merge into the OpenStreetMap entry');
+  assert(n.filter(x => x === 'Hulls Falls').length === 1, 'Hulls Falls duplicated across sources');
+  assert(by['Canfield Casino and Congress Park'].src === 'wikipedia' && by['Canfield Casino and Congress Park'].cat === 'attraction', `Canfield Casino: ${JSON.stringify(by['Canfield Casino and Congress Park'])}`);
+  await ctx.close();
+});
+
+test('overpass down: Wikipedia finds still show, message is clear, Retry adds OSM and keeps stars', async () => {
+  const world = makeWorld();
+  world.all(504);
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  const down = await settle(page);
+  assert(down.finds.length >= 7, `only ${down.finds.length} finds with Overpass down`);
+  assert(down.finds.every(f => f.src === 'wikipedia'), 'non-Wikipedia finds while Overpass was down');
+  assert(/Found \d+ spots/.test(down.status) && /smaller spots/.test(down.status) && /whole route/.test(down.status) && /Retry/.test(down.status), `status: ${down.status}`);
+  const fwh = down.finds.find(f => f.name === 'Fort William Henry');
+  assert(fwh, 'Fort William Henry should come from Wikipedia while Overpass is down');
+  await page.evaluate(id => { window.__byway.state.picks.add(id); }, fwh.id);
+  world.all('ok');
+  await page.click('[data-action="retry-failed"]');
+  const up = await settle(page);
+  assert(up.failed === 0 && /^✓?\s*Found/.test(up.status), `after retry: ${up.status}`);
+  const merged = up.finds.filter(f => f.name === 'Fort William Henry');
+  assert(merged.length === 1 && merged[0].src === 'osm', 'Fort William Henry not merged into the OpenStreetMap entry after retry');
+  const starred = await page.evaluate(id => window.__byway.state.picks.has(id), merged[0].id);
+  assert(starred, 'star on the Wikipedia copy was lost when OpenStreetMap replaced it');
+  assert(up.finds.some(f => f.name === "World's Largest Garden Gnome"), 'OpenStreetMap-only finds missing after retry');
+  await ctx.close();
+});
+
+test('wikipedia down: OpenStreetMap carries the scan; Retry re-asks Wikipedia only', async () => {
+  const world = makeWorld();
+  world.wiki = 'fail';
+  const { page, ctx } = await openPage(world, { search: TROY });
+  const r = await settle(page);
+  assert(r.finds.length > 0 && r.finds.every(f => f.src === 'osm'), 'expected OpenStreetMap finds only');
+  assert(/Wikipedia lookups? didn’t answer/.test(r.status), `status: ${r.status}`);
+  world.wiki = 'ok'; world.reset();
+  await page.click('[data-action="retry-failed"]');
+  const up = await settle(page);
+  assert(world.overpassCalls().length === 0, 'retry re-asked Overpass for sections that had succeeded');
+  assert(up.finds.some(f => f.name === 'Canfield Casino and Congress Park'), 'Wikipedia finds missing after retry');
+  await ctx.close();
+});
+
+test('overpass: an empty answer at the time limit is a failure and is not saved', async () => {
+  const world = makeWorld();
+  world.set('overpass-api.de', 'slowEmpty');
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  const r = await settle(page, 60000);
+  assert(r.failed === 0, `scan should recover on another mirror: ${r.status}`);
+  const d = await page.evaluate(() => ({ log: window.__byway.scanLog.entries.filter(e => e.outcome === 'fail'), why: (window.__byway.hostState.get('https://overpass-api.de/api/interpreter') || {}).why }));
+  assert(d.log.some(e => e.host === 'overpass-api.de' && /empty answer at the time limit/.test(e.why)), `not logged as a failure: ${JSON.stringify(d.log)}`);
+  assert(r.finds.some(f => f.src === 'osm'), 'OpenStreetMap finds missing — the empty answer may have been accepted');
+  await ctx.close();
 });
 
 // BYWAY_DEBUG=1 node tests/run.mjs debug  → prints every find with score and shortlist mark, for tuning.
