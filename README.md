@@ -4,7 +4,7 @@ Find the oddities, landmarks, waterfalls and tiny museums hiding just off your d
 
 **Open it:** https://nateflynn.github.io/byway/
 
-Enter a start and a destination (plus any stops in between). Byway draws the route, scans a corridor along it for interesting places, and builds a spread-out shortlist so one big city can't crowd out the rest of the trip. Star the stops you like, then hand the whole trip to Google Maps for turn-by-turn navigation.
+Enter a start and a destination (plus any stops in between). Byway draws the route, scans a corridor along it for interesting places, and builds a spread-out shortlist (about 10 per day of driving, up to 60) so one big city can't crowd out the rest of the trip. At most 100 finds are shown per route, picked stretch by stretch along the road; category and corridor filters apply before that cap. Star the stops you like, then hand the whole trip to Google Maps for turn-by-turn navigation. Google takes 9 stops per link, so Byway warns when more picks will split the drive into parts.
 
 ## How it works
 

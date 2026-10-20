@@ -299,6 +299,11 @@ const CFG = {
   cacheDays: 7,           // Overpass answers are reused for a week (memory + localStorage)
   cacheMaxChars: 3500000, // localStorage budget for cached answers (~3.5 MB of the usual 5 MB)
   chunkMi: 40,
+  maxFinds: 100,         // most finds shown per route (list + map), spread along the road
+  shortlistPerDay: 10,   // shortlist size: about this many per day of driving…
+  dayMi: 400,            // …where a day is about this many miles
+  shortlistMax: 60,
+  stopsPerLink: 9,       // Google Maps waypoints per directions link
   concurrency: 2,
 };
 const MI = 1609.344;
@@ -632,11 +637,29 @@ function dedupe(list) {
   }
   return out;
 }
+const shortlistSize = routeMi => Math.min(CFG.shortlistMax, Math.round(CFG.shortlistPerDay * Math.max(1, routeMi / CFG.dayMi)));
+// Keep at most `cap` finds, spread along the road: each ~10 mi stretch offers its best find in turn
+// (round-robin), so one dense city can't use up the budget. Weak finds (score < 0.5) only fill
+// whatever room is left.
+function spreadCap(list, cap, routeMi) {
+  if (list.length <= cap) return list;
+  const nb = clamp(Math.round(routeMi / 10), 1, 200), binLen = Math.max(routeMi, 1) / nb;
+  const bins = Array.from({ length: nb }, () => []);
+  for (const f of list.filter(f => f.score >= 0.5).sort((a, b) => b.score - a.score)) bins[clamp(Math.floor(f.along / binLen), 0, nb - 1)].push(f);
+  const out = [];
+  for (let r = 0; out.length < cap; r++) {
+    const round = bins.map(b => b[r]).filter(Boolean).sort((a, b) => b.score - a.score);
+    if (!round.length) break;
+    out.push(...round.slice(0, cap - out.length));
+  }
+  if (out.length < cap) out.push(...list.filter(f => f.score < 0.5).sort((a, b) => b.score - a.score).slice(0, cap - out.length));
+  return out;
+}
 // A spread-out sampler: greedy picks that reward covering an empty stretch of
 // road and penalize piling onto one stretch or one category.
 function curate(list, routeMi) {
   if (!list.length) return [];
-  const target = clamp(Math.round(routeMi / 10), 8, 60);
+  const target = shortlistSize(routeMi);
   if (list.length <= target) return list.slice();
   const nb = target, binLen = Math.max(routeMi, 1) / nb;
   const binOf = f => clamp(Math.floor(f.along / binLen), 0, nb - 1);
@@ -920,7 +943,7 @@ async function enrich(items, signal) {
 /* ================= state ================= */
 const state = {
   stops: [], radius: 5, queryRadius: 0, lens: 'all', view: 'shortlist', sort: 'route',
-  route: null, raw: new Map(), finds: [], shortlist: [], shortNum: new Map(),
+  route: null, raw: new Map(), finds: [], visible: [], lensTotal: 0, shortlist: [], shortNum: new Map(),
   picks: new Set(), selectedId: null, allLimit: 150, runId: 0, ctl: null, failed: [], busy: false,
   navFromHere: store.get('navFromHere', true), qrPart: null,
 };
@@ -928,7 +951,7 @@ let stopSeq = 0;
 const newStop = (text = '') => ({ id: ++stopSeq, text, coord: parseCoord(text) });
 const stopById = id => state.stops.find(s => s.id === id);
 const activeStops = () => state.stops.filter(s => s.text.trim());
-const visibleFinds = () => state.lens === 'all' ? state.finds : state.finds.filter(f => f.cat === state.lens);
+const visibleFinds = () => state.visible;
 const pickedFinds = () => [...state.picks].map(id => state.raw.get(id)).filter(Boolean);
 
 let map, tiles, routeLayer, stopLayer, findLayer, pickLayer, selLayer, dotRenderer, routeRenderer;
@@ -963,11 +986,15 @@ function reproject() {
   }
 }
 function recompute() {
-  if (!state.route) { state.finds = []; state.shortlist = []; state.shortNum = new Map(); return; }
+  if (!state.route) { state.finds = []; state.visible = []; state.lensTotal = 0; state.shortlist = []; state.shortNum = new Map(); return; }
   const within = [];
   for (const f of state.raw.values()) if (f.off <= state.radius) { f.score = f.base - 0.22 * f.off; within.push(f); }
   state.finds = dedupe(within);
-  state.shortlist = curate(visibleFinds(), state.route.distanceMi);
+  // Category and corridor filters see every find; only then is the list trimmed to the best CFG.maxFinds.
+  const inLens = state.lens === 'all' ? state.finds : state.finds.filter(f => f.cat === state.lens);
+  state.lensTotal = inLens.length;
+  state.visible = spreadCap(inLens, CFG.maxFinds, state.route.distanceMi);
+  state.shortlist = curate(state.visible, state.route.distanceMi);
   state.shortNum = new Map(state.shortlist.slice().sort((a, b) => a.along - b.along).map((f, i) => [f.id, i + 1]));
 }
 
@@ -1259,8 +1286,10 @@ function renderResults() {
   $('#sort').value = state.sort;
   const list = sortList((state.view === 'shortlist' ? state.shortlist : vis).slice());
   $('#hint').textContent = state.view === 'shortlist'
-    ? 'A spread-out sampler: the strongest find in each stretch of road, mixed across categories.'
-    : `Everything within ${state.radius} mi of the route${state.lens !== 'all' ? ` tagged ${CATS[state.lens].label}` : ''}.`;
+    ? `A spread-out sampler: about ${CFG.shortlistPerDay} of the strongest finds per day of driving, mixed across categories.`
+    : state.lensTotal > vis.length
+      ? `The best ${vis.length.toLocaleString()} of ${state.lensTotal.toLocaleString()} finds within ${state.radius} mi${state.lens !== 'all' ? ` tagged ${CATS[state.lens].label}` : ''}, spread along the route.`
+      : `Everything within ${state.radius} mi of the route${state.lens !== 'all' ? ` tagged ${CATS[state.lens].label}` : ''}.`;
   const shown = state.view === 'all' ? list.slice(0, state.allLimit) : list;
   $('#list').innerHTML = shown.length
     ? shown.map(cardHTML).join('') + (list.length > shown.length ? `<button class="btn ghost more" type="button" data-action="more">Show ${Math.min(150, list.length - shown.length)} more of ${(list.length - shown.length).toLocaleString()}</button>` : '')
@@ -1373,8 +1402,12 @@ function selectFind(id, from) {
   if (f.info === undefined && (f.wiki || f.wd)) enrich([f]).then(() => { updateCard(f.id); refreshPopup(f.id); });
 }
 function togglePick(id) {
-  if (state.picks.has(id)) state.picks.delete(id); else state.picks.add(id);
+  const adding = !state.picks.has(id), partsBefore = navParts().length;
+  if (adding) state.picks.add(id); else state.picks.delete(id);
   updateCard(id); refreshPopup(id); renderSummary(); renderPicks();
+  const parts = navParts().length;
+  // Soft limit: more picks are allowed, but say when they push the drive into another Google Maps link.
+  if (adding && parts > partsBefore && parts > 1) toast(`Google Maps takes ${CFG.stopsPerLink} stops per link, so this drive now opens in ${parts} parts.`);
   const f = state.raw.get(id);
   if (f && f.info === undefined && (f.wiki || f.wd)) enrich([f]).then(() => updateCard(id));
 }
@@ -1685,7 +1718,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
