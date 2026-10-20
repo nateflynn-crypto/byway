@@ -23,7 +23,10 @@ try { ({ chromium } = require('playwright')); }
 catch { ({ chromium } = require(require.resolve('playwright', { paths: [process.env.NODE_PATH || '', '/opt/npm-tools/node_modules'] }))); }
 
 const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-const FIX = JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'troy-lake-placid.json'), 'utf8'));
+// BYWAY_FIXTURE=fixtures/other.json swaps in another fixture (e.g. one captured with ?debug=1 → Copy fixture);
+// most assertions are written for troy-lake-placid.json, so use it with the debug dump.
+const FIX_PATH = process.env.BYWAY_FIXTURE ? path.resolve(HERE, process.env.BYWAY_FIXTURE) : path.join(HERE, 'fixtures', 'troy-lake-placid.json');
+const FIX = JSON.parse(fs.readFileSync(FIX_PATH, 'utf8'));
 const leafletDir = path.join(HERE, 'node_modules', 'leaflet', 'dist');
 const REAL_LEAFLET = fs.existsSync(path.join(leafletDir, 'leaflet.js'));
 const LEAFLET_JS = REAL_LEAFLET ? fs.readFileSync(path.join(leafletDir, 'leaflet.js'), 'utf8') : fs.readFileSync(path.join(HERE, 'leaflet-stub.js'), 'utf8');
@@ -70,6 +73,7 @@ function overpassAnswer(q, extra = []) {
 }
 
 /* ---------- fake services ---------- */
+const FIX_IDS_IN_CORRIDOR = FIX.elements.map(e => e.id).filter(id => id !== 26);
 const OVERPASS_HOSTS = ['overpass-api.de', 'overpass.private.coffee', 'overpass.kumi.systems', 'maps.mail.ru'];
 function makeWorld() {
   // behavior per host: 'ok' | 429 | 504 | 'remark' | 'xml' | 'refuse', or an array consumed one per request
@@ -132,7 +136,8 @@ async function openPage(world, { context, search = '' } = {}) {
   await page.waitForFunction(() => !!window.__byway);
   return { page, ctx };
 }
-const TROY = '?from=Troy%2C+NY&to=Lake+Placid%2C+NY';
+const [FROM, TO] = Object.keys(FIX.geocode);
+const TROY = `?from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}`;
 async function settle(page, timeout = 30000) {
   await page.waitForFunction(() => {
     const S = window.__byway && window.__byway.state, st = document.querySelector('#status');
@@ -418,6 +423,61 @@ test('picks: the 10th star warns that the drive splits into two Google Maps link
   const picks = await page.evaluate(() => window.__byway.state.picks.size);
   assert(picks === 10, `soft limit should still allow the 10th pick (have ${picks})`);
   await ctx.close();
+});
+
+test('scan log (?debug=1): every step and section logged, panel shown, debug kept in URL', async () => {
+  const world = makeWorld();
+  world.set('overpass-api.de', 429);
+  const { page, ctx } = await openPage(world, { search: TROY + '&debug=1' });
+  const r = await settle(page);
+  const d = await page.evaluate(() => ({ log: window.__byway.scanLog.entries, json: JSON.parse(window.__byway.scanLogJSON()),
+    shown: !document.querySelector('#dbg').hidden, rows: document.querySelectorAll('#dbg tbody tr').length, url: location.search }));
+  const kinds = d.log.map(e => e.kind);
+  for (const k of ['start', 'geocode', 'route', 'sections', 'done']) assert(kinds.includes(k), `log missing "${k}": ${kinds}`);
+  const ok = d.log.filter(e => e.kind === 'section' && e.outcome === 'ok');
+  assert(ok.length === r.chunks, `${ok.length} ok section entries for ${r.chunks} sections`);
+  assert(ok.every(e => e.host && e.s >= 0 && e.els >= 0 && e.sec >= 1 && e.of === r.chunks), `incomplete section entry: ${JSON.stringify(ok[0])}`);
+  const fail = d.log.find(e => e.outcome === 'fail');
+  assert(fail && fail.host === 'overpass-api.de' && /rate-limited/.test(fail.why), `429 not logged: ${JSON.stringify(fail)}`);
+  assert(d.json.route && d.json.route.sections === r.chunks && d.json.hosts['overpass-api.de'] === 'rate-limited', 'Copy log JSON incomplete');
+  assert(d.shown && d.rows === d.log.length, `panel shown ${d.shown}, rows ${d.rows} vs ${d.log.length} entries`);
+  assert(/debug=1/.test(d.url), `debug flag dropped from URL: ${d.url}`);
+  // Reload: every section should now come from the answer cache and be logged that way.
+  await page.reload();
+  await settle(page);
+  const cached = await page.evaluate(() => window.__byway.scanLog.entries.filter(e => e.kind === 'section').map(e => e.outcome));
+  assert(cached.length === r.chunks && cached.every(o => o === 'cache'), `after reload: ${cached}`);
+  await ctx.close();
+});
+
+test('scan log: hidden without ?debug=1', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY });
+  await settle(page);
+  const d = await page.evaluate(() => ({ hidden: document.querySelector('#dbg').hidden, n: window.__byway.scanLog.entries.length, url: location.search }));
+  assert(d.hidden && !/debug/.test(d.url), 'debug panel or flag leaked into a normal run');
+  assert(d.n > 0, 'log should still be collected for the console');
+  await ctx.close();
+});
+
+test('fixture export: captures the route and every place Overpass returned', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world, { search: TROY + '&debug=1' });
+  await settle(page);
+  const fx = await page.evaluate(() => window.__byway.exportFixture());
+  const expected = new Set(world.overpassCalls().length ? FIX_IDS_IN_CORRIDOR : []);
+  assert(fx && fx.waypoints.length > 10 && Object.keys(fx.geocode).length === 2, 'fixture missing route or stops');
+  const ids = new Set(fx.elements.map(e => e.id));
+  for (const id of expected) assert(ids.has(id), `fixture missing element ${id}`);
+  assert(!ids.has(26), 'fixture includes a place outside the corridor');
+  assert(fx.elements.every(e => e.tags && (e.lat != null || e.center)), 'fixture elements lost coordinates or tags');
+  await ctx.close();
+  // Replay it: the captured fixture must drive a full offline run (debug dump) on its own.
+  if (process.env.BYWAY_FIXTURE) return; // no recursion
+  const tmp = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'byway-')), 'captured.json');
+  fs.writeFileSync(tmp, JSON.stringify(fx));
+  const out = spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'debug dump'], { env: { ...process.env, BYWAY_FIXTURE: tmp, BYWAY_DEBUG: '1' }, encoding: 'utf8', timeout: 120000 });
+  assert(out.status === 0 && /Fort William Henry/.test(out.stdout) && /1 passed, 0 failed/.test(out.stdout), `replay of captured fixture failed:\n${out.stdout}\n${out.stderr}`);
 });
 
 // BYWAY_DEBUG=1 node tests/run.mjs debug  → prints every find with score and shortlist mark, for tuning.

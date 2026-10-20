@@ -36,4 +36,8 @@ npx playwright install chromium  # first time only
 npm test                         # or: node run.mjs cache   (only tests matching "cache")
 ```
 
-Without `npm install`, a small Leaflet stand-in (`tests/leaflet-stub.js`) is used. The QR test also needs `python3` with OpenCV (`pip install opencv-python-headless`) and is skipped without it. `BYWAY_DEBUG=1 node run.mjs debug` prints every find with its score, which helps when tuning.
+Without `npm install`, a small Leaflet stand-in (`tests/leaflet-stub.js`) is used. The QR test also needs `python3` with OpenCV (`pip install opencv-python-headless`) and is skipped without it. `BYWAY_DEBUG=1 node run.mjs "debug dump"` prints every find with its score, which helps when tuning.
+
+### Scan log
+
+Add `&debug=1` to a Byway link to show a scan log: geocoding and routing times, then every Overpass attempt with its mirror, time, place count, and whether it came from the saved answers or failed (and why). **Copy log** copies it as JSON. **Copy fixture** copies the route plus every place Overpass returned, in the same format as `tests/fixtures/`; save it as `tests/fixtures/<name>.json` and replay it offline with `BYWAY_FIXTURE=fixtures/<name>.json BYWAY_DEBUG=1 node run.mjs "debug dump"`.

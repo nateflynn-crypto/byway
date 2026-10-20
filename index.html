@@ -209,6 +209,16 @@ footer p{margin:6px 0}
   h1{font-size:38px}
 }
 .tiles-dark{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) saturate(.8)}
+#dbg{position:fixed;right:16px;bottom:16px;z-index:2000;width:min(620px,calc(100vw - 32px));max-height:45vh;display:flex;flex-direction:column;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#dbg[hidden]{display:none}
+#dbg .dh{display:flex;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line)}
+#dbg .dh b{flex:1}
+#dbg .db{overflow:auto;padding:4px 10px 8px}
+#dbg table{border-collapse:collapse;width:100%}
+#dbg td,#dbg th{text-align:left;padding:2px 6px 2px 0;white-space:nowrap;vertical-align:top}
+#dbg td.w{white-space:normal}
+#dbg tr.fail td{color:var(--accent)}
+#dbg tr.cache td{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -270,6 +280,7 @@ footer p{margin:6px 0}
   <main id="map" aria-label="Map"></main>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
+<div id="dbg" hidden></div>
 <noscript><p style="padding:20px">Byway needs JavaScript to run.</p></noscript>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -779,6 +790,19 @@ function overpassQuery(poly, rM) {
     `nwr${A}[boundary~"^(national_park|protected_area)$"][name][wikipedia];` +
     `);out tags center qt;`;
 }
+/* ---- Scan log (shown with ?debug=1) ----
+   One entry per step: geocoding, routing, and every Overpass attempt with its mirror, time, place
+   count and outcome, so a single live run explains where time went without extra test queries. */
+const DEBUG = /[?&]debug(=|&|$)/.test(location.search);
+const scanLog = { t0: 0, entries: [] };
+const secs = ms => +(ms / 1000).toFixed(1);
+function logScan(e) {
+  e.at = secs(performance.now() - scanLog.t0);
+  scanLog.entries.push(e);
+  if (DEBUG) renderDebug();
+}
+const hostName = u => { try { return new URL(u).hostname; } catch { return u; } };
+
 /* ---- Overpass: answer cache ----
    Answers are keyed by a hash of the exact query (route section + corridor width), so a retry,
    a reload or a repeat of the same drive reuses what already came back instead of asking again. */
@@ -833,9 +857,10 @@ function hostOrder(offset) {
     .sort((a, b) => (a.left > 0) - (b.left > 0) || a.left - b.left || a.rank - b.rank)
     .map(x => x.u);
 }
-async function overpass(query, signal, offset = 0, onNote) {
+async function overpass(query, signal, offset = 0, onNote, sec) {
+  const tag = sec ? { sec: sec.k + 1, of: sec.n } : {};
   const hit = cacheGet(query);
-  if (hit) return hit;
+  if (hit) { logScan({ kind: 'section', ...tag, outcome: 'cache', els: (hit.elements || []).length }); return hit; }
   let lastErr;
   const tried = new Set();
   for (let attempt = 0; attempt < CFG.overpassTries; attempt++) {
@@ -844,6 +869,7 @@ async function overpass(query, signal, offset = 0, onNote) {
     const wait = Math.min(benchLeft(url), CFG.benchMaxWaitMs);
     if (wait > 0) {
       if (onNote) onNote('The map-data servers are busy — waiting a moment before asking again…');
+      logScan({ kind: 'wait', ...tag, host: hostName(url), s: secs(wait), why: (hostState.get(url) || {}).why });
       await sleep(wait);
       if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
     }
@@ -858,6 +884,7 @@ async function overpass(query, signal, offset = 0, onNote) {
       if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) { const e = new Error(j.remark); e.remark = true; throw e; }
       hostState.delete(url);
       if (onNote) onNote(null);
+      logScan({ kind: 'section', ...tag, attempt: attempt + 1, host: hostName(url), outcome: 'ok', s: secs(Date.now() - t0), els: (j.elements || []).length });
       cachePut(query, j);
       return j;
     } catch (e) {
@@ -870,6 +897,8 @@ async function overpass(query, signal, offset = 0, onNote) {
       else if (e.name === 'AbortError') bench(url, 30000, 'no answer');
       else if (fast) bench(url, 60000, 'refused');           // connection refused/reset: usually a block
       else bench(url, 30000, e.message || 'bad answer');     // e.g. an HTML/XML error page instead of JSON
+      const why = (hostState.get(url) || {}).why;
+      logScan({ kind: 'section', ...tag, attempt: attempt + 1, host: hostName(url), outcome: 'fail', s: secs(Date.now() - t0), why: why === e.message ? why : `${why}${e.message ? ` (${e.message})` : ''}` });
       if (onNote) onNote('A map-data server didn’t answer — trying another…');
     }
   }
@@ -887,7 +916,7 @@ function makeChunks(route, R) {
     }
   }
   if (!chunks.length) chunks.push(pts.slice());
-  return chunks.map(c => ({ query: overpassQuery(c.map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(','), rM) }));
+  return chunks.map((c, k, all) => ({ k, n: all.length, query: overpassQuery(c.map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(','), rM) }));
 }
 
 /* Wikipedia / Wikidata enrichment */
@@ -1008,8 +1037,11 @@ async function run(mode = 'full') {
   if (active.length !== state.stops.length) { state.stops = active; renderStops(); }
   setBusy(true);
   $('#go').classList.remove('pulse');
+  scanLog.t0 = performance.now(); scanLog.entries = [];
+  logScan({ kind: 'start', mode, stops: active.map(s => stripCoord(s.text)).join(' → '), radius: state.radius });
   try {
     setStatus({ kind: 'busy', text: 'Finding your places…' });
+    let tStep = performance.now();
     for (const s of active) {
       if (s.coord) continue;
       const c = await geocode(s.text, sig);
@@ -1017,9 +1049,12 @@ async function run(mode = 'full') {
       if (!c) throw new UserError(`Couldn't find “${stripCoord(s.text)}”. Try adding a state or a more specific place.`);
       s.coord = c;
     }
+    logScan({ kind: 'geocode', s: secs(performance.now() - tStep) });
     setStatus({ kind: 'busy', text: 'Drawing the drive…' });
+    tStep = performance.now();
     const route = await getRoute(active.map(s => s.coord), sig);
     if (stale()) return;
+    logScan({ kind: 'route', s: secs(performance.now() - tStep), mi: Math.round(route.distanceMi), points: route.pts.length });
     state.route = route;
     drawRoute(active, mode !== 'reroute');
     syncURL(); saveRecent(active);
@@ -1036,23 +1071,26 @@ async function run(mode = 'full') {
     state.allLimit = 150; state.failed = []; state.queryRadius = state.radius;
     recompute(); render();
     const chunks = makeChunks(route, state.radius);
+    logScan({ kind: 'sections', n: chunks.length, chunkMi: CFG.chunkMi, concurrency: CFG.concurrency });
     let done = 0, note = null;
     const progress = () => setStatus({ kind: 'busy', text: `Scouting the corridor · section ${Math.min(done + 1, chunks.length)} of ${chunks.length} · ${state.finds.length.toLocaleString()} finds` + (note ? ` · ${note}` : ''), pct: done / chunks.length });
     const onNote = n => { if (n === note || stale()) return; note = n; progress(); };
     progress();
     const tick = throttle(() => { if (!stale()) { recompute(); render(); progress(); } }, 450);
     await pool(chunks, CFG.concurrency, async (ch, k) => {
-      try { const j = await overpass(ch.query, sig, k % 2, onNote); if (stale()) return; ingest(j.elements || []); }
+      try { const j = await overpass(ch.query, sig, k % 2, onNote, ch); if (stale()) return; ingest(j.elements || []); }
       catch (e) { if (sig.aborted) return; console.warn('section failed', e); state.failed.push(ch); }
       done++; tick();
     });
     tick.cancel();
     if (stale()) return;
     recompute(); render(); finishStatus();
+    logScan({ kind: 'done', finds: state.finds.length, shown: state.visible.length, shortlist: state.shortlist.length, failed: state.failed.length });
     await enrichVisible(sig);
   } catch (e) {
     if (sig.aborted || stale()) return;
     if (!(e instanceof UserError)) console.error(e);
+    logScan({ kind: 'error', why: e.message });
     setStatus({ kind: 'error', retry: true, text: e instanceof UserError ? e.message : `Something went wrong (${e.message}). The free map services may be busy — try again in a moment.` });
   } finally {
     if (!stale()) setBusy(false);
@@ -1066,19 +1104,22 @@ async function retryFailed() {
   setBusy(true);
   let done = 0;
   setStatus({ kind: 'busy', text: `Retrying ${chunks.length} section(s)…`, pct: 0 });
+  logScan({ kind: 'retry', n: chunks.length });
   const onNote = n => { if (n && my === state.runId) setStatus({ kind: 'busy', text: `Retrying sections · ${done} of ${chunks.length} · ${n}`, pct: done / chunks.length }); };
   await pool(chunks, 1, async ch => {
-    try { const j = await overpass(ch.query, ctl.signal, 0, onNote); if (my === state.runId) ingest(j.elements || []); }
+    try { const j = await overpass(ch.query, ctl.signal, 0, onNote, ch); if (my === state.runId) ingest(j.elements || []); }
     catch (e) { if (!ctl.signal.aborted) state.failed.push(ch); }
     done++;
     if (my === state.runId) setStatus({ kind: 'busy', text: `Retrying sections · ${done} of ${chunks.length}`, pct: done / chunks.length });
   });
   if (my !== state.runId) return;
   recompute(); render(); finishStatus(); setBusy(false);
+  logScan({ kind: 'done', finds: state.finds.length, shown: state.visible.length, shortlist: state.shortlist.length, failed: state.failed.length });
   enrichVisible(ctl.signal);
 }
 function cancelRun() {
   if (state.ctl) state.ctl.abort();
+  logScan({ kind: 'stopped', finds: state.finds.length });
   state.runId++;
   setBusy(false);
   if (state.route) { recompute(); render(); }
@@ -1420,6 +1461,7 @@ function buildURL() {
   if (act.length > 1) p.set('to', act[act.length - 1].text);
   if (state.radius !== 5) p.set('r', String(state.radius));
   if (state.lens !== 'all') p.set('lens', state.lens);
+  if (DEBUG) p.set('debug', '1');
   return location.href.split(/[?#]/)[0] + '?' + p.toString();
 }
 function syncURL() { try { history.replaceState(null, '', buildURL()); } catch {} }
@@ -1503,6 +1545,44 @@ async function copyText(s) {
   }
 }
 let toastT;
+function scanLogJSON() {
+  const r = state.route;
+  return JSON.stringify({ app: 'byway', at: new Date().toISOString(), url: location.href, ua: navigator.userAgent,
+    route: r ? { mi: Math.round(r.distanceMi), sections: makeChunks(r, state.queryRadius || state.radius).length } : null,
+    hosts: Object.fromEntries([...hostState].map(([u, v]) => [hostName(u), v.why])), log: scanLog.entries }, null, 1);
+}
+// Same shape as tests/fixtures/*.json: the route plus every place Overpass returned for it (from the
+// answer cache), so a live run can be replayed and tuned offline.
+function exportFixture() {
+  const r = state.route; if (!r) return null;
+  const els = new Map();
+  for (const ch of makeChunks(r, state.queryRadius || state.radius)) {
+    const j = cacheGet(ch.query);
+    for (const e of (j && j.elements) || []) els.set(`${e.type}/${e.id}`, e);
+  }
+  const act = activeStops().filter(s => s.coord);
+  return { _note: `Captured from a live Byway run on ${new Date().toISOString().slice(0, 10)} (corridor ${state.queryRadius} mi).`,
+    geocode: Object.fromEntries(act.map(s => [s.text, [+s.coord.lat.toFixed(5), +s.coord.lon.toFixed(5)]])),
+    waypoints: simplify(r.pts, 0.1).map(p => [+p[0].toFixed(5), +p[1].toFixed(5)]), elements: [...els.values()] };
+}
+function renderDebug() {
+  const el = $('#dbg'); if (!el || !DEBUG) return;
+  el.hidden = false;
+  const cell = v => (v == null ? '' : esc(String(v)));
+  const rows = scanLog.entries.map(e => {
+    const what = e.kind === 'section' ? `§${e.sec}/${e.of}${e.attempt > 1 ? ` try ${e.attempt}` : ''}` : e.kind;
+    const info = e.kind === 'section' || e.kind === 'wait' ? (e.why || '')
+      : Object.entries(e).filter(([k]) => !['kind', 'at', 's'].includes(k)).map(([k, v]) => `${k} ${v}`).join(' · ');
+    return `<tr class="${e.outcome || ''}"><td>${cell(e.at)}s</td><td>${cell(what)}</td><td>${cell(e.host)}</td><td>${cell(e.outcome)}</td><td>${e.s != null ? cell(e.s) + 's' : ''}</td><td>${cell(e.els)}</td><td class="w">${cell(info)}</td></tr>`;
+  }).join('');
+  el.innerHTML = `<div class="dh"><b>Scan log</b>
+      <button class="btn sm" type="button" data-action="dbg-copy">Copy log</button>
+      <button class="btn sm" type="button" data-action="dbg-fixture">Copy fixture</button>
+      <button class="btn sm ghost" type="button" data-action="dbg-hide" aria-label="Hide scan log">✕</button></div>
+    <div class="db"><table><thead><tr><th>at</th><th>step</th><th>mirror</th><th>result</th><th>took</th><th>places</th><th>note</th></tr></thead><tbody>${rows || '<tr><td colspan="7">Nothing yet — start a scan.</td></tr>'}</tbody></table></div>`;
+  const body = el.querySelector('.db'); body.scrollTop = body.scrollHeight;
+}
+
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2200);
@@ -1673,6 +1753,9 @@ function bind() {
       case 'retry': run(); break;
       case 'retry-failed': retryFailed(); break;
       case 'cancel': cancelRun(); break;
+      case 'dbg-copy': toast(await copyText(scanLogJSON()) ? 'Scan log copied' : "Couldn't copy"); break;
+      case 'dbg-fixture': { const fx = exportFixture(); toast(fx && await copyText(JSON.stringify(fx)) ? `Fixture copied (${fx.elements.length} places)` : "Couldn't copy"); break; }
+      case 'dbg-hide': $('#dbg').hidden = true; break;
       case 'lens': state.lens = a.dataset.lens; recompute(); render(); syncURL(); enrichVisible(); break;
       case 'view': state.view = a.dataset.view; state.allLimit = 150; renderResults(); renderMarkers(); renderPicks(); drawSelection(); break;
       case 'more': state.allLimit += 150; renderResults(); break;
@@ -1715,10 +1798,11 @@ function init() {
   $('#radius').value = state.radius; $('#radiusOut').textContent = `${state.radius} mi`;
   state.stops = (from || to) ? [from || '', ...vias, to || ''].map(newStop) : [newStop(), newStop()];
   renderStops(); renderPresets(); renderRecent(); bind();
+  if (DEBUG) renderDebug();
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize };
+window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, scanLog, scanLogJSON, exportFixture };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
