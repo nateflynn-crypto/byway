@@ -631,7 +631,8 @@ function classify(t, name) {
   else if (t.leisure || t.boundary) { cat = 'nature'; base = 0.7; }
   else if (tour === 'attraction') { cat = 'attraction'; base = 2.0; }
 
-  if (weird && !nat && !t.boundary && !t.leisure) { cat = 'weird'; base += 2.5; } // a "Giant Mountain" isn't a roadside oddity
+  // A "Giant Mountain" or "Giant Washbowl Overlook" is a place name, not a roadside oddity.
+  if (weird && !nat && !t.boundary && !t.leisure && tour !== 'viewpoint') { cat = 'weird'; base += 2.5; }
   if (t.wikipedia) base += 3.5; else if (t.wikidata) base += 1.8;
   if (t['ref:nhl'] || t['heritage:operator'] === 'nhl') base += 1.0;
   if (t.website || t['contact:website'] || t.url) base += 0.5;
