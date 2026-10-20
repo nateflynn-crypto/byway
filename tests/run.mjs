@@ -152,7 +152,7 @@ const TROY = `?from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}`;
 async function settle(page, timeout = 30000) {
   await page.waitForFunction(() => {
     const S = window.__byway && window.__byway.state, st = document.querySelector('#status');
-    return S && !S.busy && st && !st.hidden && !/Scouting|Retrying|Finding your|Drawing|Looking up|checking OpenStreetMap/.test(st.textContent);
+    return S && !S.busy && !S.bg && st && !st.hidden && !/Scouting|Retrying|Finding your|Drawing|Looking up|checking OpenStreetMap/.test(st.textContent);
   }, null, { timeout });
   return page.evaluate(() => {
     const S = window.__byway.state, st = document.querySelector('#status');
@@ -638,6 +638,55 @@ test('overpass: an empty answer at the time limit is a failure and is not saved'
   const d = await page.evaluate(() => ({ log: window.__byway.scanLog.entries.filter(e => e.outcome === 'fail'), why: (window.__byway.hostState.get('https://overpass-api.de/api/interpreter') || {}).why }));
   assert(d.log.some(e => e.host === 'overpass-api.de' && /empty answer at the time limit/.test(e.why)), `not logged as a failure: ${JSON.stringify(d.log)}`);
   assert(r.finds.some(f => f.src === 'osm'), 'OpenStreetMap finds missing — the empty answer may have been accepted');
+  await ctx.close();
+});
+
+// Wait until the Wikipedia pass is done and only the OpenStreetMap pass is left running.
+const untilBackground = page => page.waitForFunction(() => { const S = window.__byway.state; return S.bg && !S.busy; }, null, { timeout: 30000 });
+
+test('background: search unlocks once Wikipedia results are in, while OpenStreetMap keeps checking', async () => {
+  const world = makeWorld();
+  world.all('slowEmpty'); world.slowMs = 2600;
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  await untilBackground(page);
+  const mid = await page.evaluate(() => ({ disabled: document.querySelector('#go').disabled, label: document.querySelector('#go').textContent,
+    status: document.querySelector('#status').textContent, finds: window.__byway.state.finds.length, stop: !!document.querySelector('#status [data-action="cancel"]') }));
+  assert(!mid.disabled && mid.label === 'Find fun stops', `search still locked: ${JSON.stringify(mid)}`);
+  assert(/checking OpenStreetMap/.test(mid.status) && mid.stop, `background progress or its Stop button missing: ${mid.status}`);
+  assert(mid.finds >= 7, `Wikipedia finds not on screen yet (${mid.finds})`);
+  const end = await settle(page, 90000);
+  assert(/smaller spots/.test(end.status) && end.failed > 0, `end status: ${end.status}`);
+  await ctx.close();
+});
+
+test('background: starting a new search cancels the OpenStreetMap pass cleanly', async () => {
+  const world = makeWorld();
+  world.all('slowEmpty'); world.slowMs = 2600;
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  await untilBackground(page);
+  world.all('ok');
+  await page.click('#go');
+  const r = await settle(page, 60000);
+  assert(r.failed === 0 && /^✓?\s*Found/.test(r.status), `new search didn't finish cleanly: ${r.status}`);
+  assert(r.finds.some(f => f.src === 'osm'), 'new search has no OpenStreetMap finds');
+  await page.waitForTimeout(3500); // let the old run's slow answers arrive; they must be ignored
+  const after = await page.evaluate(() => ({ failed: window.__byway.state.failed.length, status: document.querySelector('#status').textContent, bg: window.__byway.state.bg }));
+  assert(after.failed === 0 && !after.bg && /Found/.test(after.status), `old run leaked into the new one: ${JSON.stringify(after)}`);
+  await ctx.close();
+});
+
+test('background: narrowing the corridor re-filters without hiding OpenStreetMap progress', async () => {
+  const world = makeWorld();
+  world.all('slowEmpty'); world.slowMs = 2600;
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  await untilBackground(page);
+  const before = await page.evaluate(() => window.__byway.state.finds.length);
+  await page.evaluate(() => { const r = document.querySelector('#radius'); r.value = '2'; r.dispatchEvent(new Event('input', { bubbles: true })); });
+  const d = await page.evaluate(() => ({ n: window.__byway.state.finds.length, status: document.querySelector('#status').textContent, bg: window.__byway.state.bg }));
+  assert(d.n < before && d.bg && /checking OpenStreetMap/.test(d.status), `narrowing during background: ${JSON.stringify({ before, ...d })}`);
   await ctx.close();
 });
 
