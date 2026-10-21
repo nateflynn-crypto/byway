@@ -747,6 +747,7 @@ test('background: starting a new search cancels the OpenStreetMap pass cleanly',
   await scanWithFastTimers(page);
   await untilBackground(page);
   world.all('ok');
+  await page.click('[data-action="edit-drive"]'); // after a search the form is folded away
   await page.click('#go');
   const r = await settle(page, 60000);
   assert(r.failed === 0 && /^✓?\s*Found/.test(r.status), `new search didn't finish cleanly: ${r.status}`);
@@ -754,6 +755,47 @@ test('background: starting a new search cancels the OpenStreetMap pass cleanly',
   await page.waitForTimeout(3500); // let the old run's slow answers arrive; they must be ignored
   const after = await page.evaluate(() => ({ failed: window.__byway.state.failed.length, status: document.querySelector('#status').textContent, bg: window.__byway.state.bg }));
   assert(after.failed === 0 && !after.bg && /Found/.test(after.status), `old run leaked into the new one: ${JSON.stringify(after)}`);
+  await ctx.close();
+});
+
+test('layout: after a search the form folds into a route line; Edit drive brings it back', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world);
+  const vis = sel => page.evaluate(s => { const e = document.querySelector(s); return !!e && e.getClientRects().length > 0; }, sel);
+  assert(await vis('#stops') && await vis('#go') && !(await vis('#routeline')), 'form should show before a search');
+  await scanWithFastTimers(page);
+  await settle(page, 60000);
+  assert(!(await vis('#stops')) && !(await vis('#go')) && !(await vis('#presets')), 'form still showing after the search');
+  assert(await vis('#routeline') && await vis('.corridor'), 'route line or corridor missing');
+  const line = await page.textContent('#routeText');
+  assert(/→/.test(line), `route line text: ${line}`);
+  // widening the corridor past the last scan brings back the button to rescan
+  await page.evaluate(() => { const r = document.querySelector('#radius'); r.value = '12'; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); });
+  assert(await vis('#go'), 'rescan button hidden after widening the corridor');
+  await page.click('[data-action="edit-drive"]');
+  assert(await vis('#stops') && await vis('#go') && !(await vis('#routeline')), 'Edit drive did not reopen the form');
+  const focused = await page.evaluate(() => document.activeElement && document.activeElement.closest('#stops') !== null);
+  assert(focused, 'first stop not focused after Edit drive');
+  await ctx.close();
+});
+
+test('cards: a long opened description is clamped with More / Less', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  await settle(page, 60000);
+  const id = await page.evaluate(() => {
+    const b = window.__byway, f = b.state.shortlist[0];
+    f.info = { extract: 'A long story about this place. '.repeat(20), desc: 'test' };
+    return f.id;
+  });
+  await page.click(`#list .card[data-id="${id}"] h3`);
+  const card = `#list .card[data-id="${id}"]`;
+  assert((await page.textContent(`${card} .snipmore`)) === 'More', 'More button missing');
+  const h1 = await page.evaluate(s => document.querySelector(s + ' .snip').getBoundingClientRect().height, card);
+  await page.click(`${card} .snipmore`);
+  const h2 = await page.evaluate(s => document.querySelector(s + ' .snip').getBoundingClientRect().height, card);
+  assert(h2 > h1 * 1.5 && (await page.textContent(`${card} .snipmore`)) === 'Less', `not expanded: ${h1} → ${h2}`);
   await ctx.close();
 });
 

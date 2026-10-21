@@ -41,6 +41,16 @@ a{color:inherit}
 h1{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:46px;line-height:.95;margin:6px 0 4px;letter-spacing:-.02em}
 .squiggle{display:block;width:170px;height:16px;margin:2px 0 10px}
 .tag{margin:0 0 6px;color:var(--muted);font-size:15px}
+/* compact: after a search the form folds into one line so the results start near the top */
+.routeline{display:none}
+.panel.compact .routeline{display:flex;align-items:center;gap:10px;margin:10px 0 12px;padding:9px 10px 9px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--card)}
+.routeline .rl{flex:1;min-width:0;font-weight:600;font-size:14.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.routeline .rl small{font-weight:500;color:var(--muted)}
+.panel.compact .tag,.panel.compact .squiggle,.panel.compact #stops,.panel.compact .addrow,.panel.compact #presets,.panel.compact #recent{display:none}
+.panel.compact #go:not(.pulse){display:none}
+.panel.compact header{display:flex;align-items:baseline;gap:10px}
+.panel.compact h1{font-size:28px;margin:0}
+.panel.compact .corridor{margin:0 0 12px}
 
 /* stops */
 .stops{list-style:none;margin:18px 0 6px;padding:0;position:relative}
@@ -157,13 +167,15 @@ select{border:1px solid var(--line);background:var(--card);border-radius:8px;pad
 .meta{font-size:12.5px;color:var(--muted)}
 .sub{font-size:12.5px;font-style:italic;color:var(--muted);margin-top:2px}
 .snip{margin:6px 0 0;font-size:13.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.card.sel .snip{-webkit-line-clamp:unset;display:block}
+.card.sel .snip{-webkit-line-clamp:5}
+.card.sel.full .snip{-webkit-line-clamp:unset;display:block}
+.snipmore{border:0;background:none;padding:2px 0 0;font-size:12.5px;font-weight:600;color:var(--accent);cursor:pointer}
 .cside{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .mini{width:52px;height:52px;object-fit:cover;border-radius:8px}
 .star{border:0;background:transparent;font-size:20px;line-height:1;cursor:pointer;color:var(--muted);padding:2px}
 .star[aria-pressed=true]{color:var(--mustard)}
 .details{margin-top:10px}
-.thumb{width:100%;max-height:200px;object-fit:cover;border-radius:10px;display:block;margin-bottom:8px}
+.thumb{width:100%;max-height:150px;object-fit:cover;border-radius:10px;display:block;margin-bottom:8px}
 .facts{margin:0 0 8px;padding-left:18px;font-size:13px;color:var(--muted)}
 .links{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .links a{font-size:12.5px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);background:var(--chip);text-decoration:none}
@@ -208,6 +220,7 @@ footer p{margin:6px 0}
   .qr{flex-direction:column;align-items:flex-start}
   h1{font-size:38px}
 }
+.tiles-light{filter:saturate(.6) brightness(1.03)}
 .tiles-dark{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) saturate(.8)}
 #dbg{position:fixed;right:16px;bottom:16px;z-index:2000;width:min(620px,calc(100vw - 32px));max-height:45vh;display:flex;flex-direction:column;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 #dbg[hidden]{display:none}
@@ -237,6 +250,11 @@ footer p{margin:6px 0}
       <svg class="squiggle" viewBox="0 0 170 16" aria-hidden="true"><path d="M2 9 C 22 -1, 34 17, 56 8 S 92 0, 112 9 S 148 15, 168 6" fill="none" stroke="#d6402f" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="1 0"/><path d="M2 9 C 22 -1, 34 17, 56 8 S 92 0, 112 9 S 148 15, 168 6" fill="none" stroke="#fff" stroke-width="1.2" stroke-linecap="round" stroke-dasharray="5 6" opacity=".9"/></svg>
       <p class="tag">Turn the miles between here and there into a string of oddities, landmarks, waterfalls and tiny museums just off the road.</p>
     </header>
+
+    <div class="routeline" id="routeline">
+      <div class="rl" id="routeText"></div>
+      <button class="btn sm" type="button" data-action="edit-drive">Edit drive</button>
+    </div>
 
     <ol class="stops" id="stops" aria-label="Route stops"></ol>
     <div class="addrow"><button class="btn dashed" data-action="add-dest" type="button">＋ Add destination</button></div>
@@ -1382,6 +1400,7 @@ async function run(mode = 'full') {
     drawRoute(active, mode !== 'reroute');
     syncURL(); saveRecent(active);
     $('#intro').hidden = true; $('#results').hidden = false;
+    setCompact(true);
 
     if (mode === 'reroute' && state.raw.size) {
       reproject(); recompute(); render();
@@ -1446,6 +1465,7 @@ async function run(mode = 'full') {
     if (sig.aborted || stale()) return;
     if (!(e instanceof UserError)) console.error(e);
     logScan({ kind: 'error', why: e.message });
+    if (e instanceof UserError) setCompact(false); // let them fix the place that wasn't found
     setStatus({ kind: 'error', retry: true, text: e instanceof UserError ? e.message : `Something went wrong (${e.message}). The free map services may be busy — try again in a moment.` });
   } finally {
     if (!stale()) setBusy(false);
@@ -1648,13 +1668,14 @@ function cardHTML(f) {
   const c = CATS[f.cat], sel = state.selectedId === f.id, picked = state.picks.has(f.id);
   const n = state.view === 'shortlist' ? state.shortNum.get(f.id) : null;
   const sub = subtitle(f), snip = snippet(f);
-  return `<article class="card${sel ? ' sel' : ''}${picked ? ' picked' : ''}" data-id="${esc(f.id)}" tabindex="0">
+  return `<article class="card${sel ? ' sel' : ''}${sel && state.snipOpen === f.id ? ' full' : ''}${picked ? ' picked' : ''}" data-id="${esc(f.id)}" tabindex="0">
     <div class="num" style="--c:${c.color}">${n != null ? n : c.emoji}</div>
     <div class="cbody">
       <h3>${esc(f.name)}</h3>
       <div class="meta">${c.emoji} ${c.label} · mile ${Math.round(f.along).toLocaleString()} · ${offText(f.off)}${f.src === 'atlas' || f.ao ? ' · Atlas Obscura' : ''}</div>
       ${sub ? `<div class="sub">${esc(cap(sub))}</div>` : ''}
       ${snip ? `<p class="snip">${esc(snip)}</p>` : ''}
+      ${sel && snip.length > 240 ? `<button class="snipmore" type="button" data-action="snip-more">${state.snipOpen === f.id ? 'Less' : 'More'}</button>` : ''}
       ${sel ? detailsHTML(f) : ''}
     </div>
     <div class="cside">
@@ -1723,7 +1744,8 @@ function setTiles() {
   /* OSM standard tiles need no key; dark mode is a CSS filter on the tile pane (.tiles-dark). */
   tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    className: isDark() ? 'tiles-dark' : '',
+    detectRetina: true, // sharp on phones and retina screens (Leaflet asks for one zoom level deeper at half size)
+    className: isDark() ? 'tiles-dark' : 'tiles-light',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 }
@@ -1739,7 +1761,29 @@ function drawRoute(active, fit) {
       zIndexOffset: 500, title: stripCoord(s.text), keyboard: false,
     }).addTo(stopLayer);
   });
-  if (fit) map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
+  if (fit) fitRoute(L.latLngBounds(pts));
+}
+// Fit the drive in view. Until the user pans, zooms or opens a stop, a change in the map's size
+// (phone rotation, the panel folding after a search) fits it again.
+const fitView = { bounds: null, auto: false };
+function fitRoute(bounds) {
+  fitView.bounds = bounds; fitView.auto = true;
+  map.invalidateSize({ pan: false });
+  const pad = innerWidth <= 820 ? 24 : 40;
+  map.fitBounds(bounds, { padding: [pad, pad] });
+}
+function watchMapSize() {
+  const el = $('#map');
+  ['mousedown', 'touchstart', 'wheel', 'keydown'].forEach(ev => el.addEventListener(ev, () => { fitView.auto = false; }, { passive: true }));
+  if (!window.ResizeObserver) return;
+  let raf = 0;
+  new ResizeObserver(() => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      map.invalidateSize({ pan: false });
+      if (fitView.auto && fitView.bounds) { const pad = innerWidth <= 820 ? 24 : 40; map.fitBounds(fitView.bounds, { padding: [pad, pad] }); }
+    });
+  }).observe(el);
 }
 const numIcon = (n, color) => L.divIcon({ className: 'mkwrap', html: `<div class="mk" style="--c:${color}">${n}</div>`, iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -12] });
 function popupHTML(f) {
@@ -1803,12 +1847,14 @@ function refreshPopup(id) {
 function selectFind(id, from) {
   const prev = state.selectedId;
   state.selectedId = (from === 'card' && prev === id) ? null : id;
+  if (state.selectedId !== prev) state.snipOpen = null;
   if (prev && prev !== state.selectedId) updateCard(prev);
   if (state.selectedId) updateCard(state.selectedId);
   drawSelection();
   const f = state.selectedId && state.raw.get(state.selectedId);
   if (!f) return;
   if (from === 'card') {
+    fitView.auto = false;
     const m = markerById.get(id);
     map.flyTo([f.lat, f.lon], Math.max(map.getZoom(), 11), { duration: 0.7 });
     if (m) map.once('moveend', () => m.openPopup());
@@ -2149,6 +2195,29 @@ async function useMyLocation(stop, btn) {
     toast(e && e.code === 1 ? 'Location permission was denied' : 'Couldn’t get your location');
   } finally { btn.disabled = false; }
 }
+function setCompact(on) {
+  const panel = $('#panel'), was = panel.classList.contains('compact');
+  if (on) {
+    const a = activeStops(), mid = a.length - 2;
+    $('#routeText').innerHTML = a.length >= 2
+      ? `${esc(stripCoord(a[0].text))} → ${esc(stripCoord(a[a.length - 1].text))}${mid > 0 ? ` <small>· ${mid} stop${mid > 1 ? 's' : ''} between</small>` : ''}`
+      : '';
+    $('#routeText').title = a.map(s => stripCoord(s.text)).join(' → ');
+  }
+  panel.classList.toggle('compact', on);
+  if (on && !was) { // the form just folded away: start at the top so the drive and its first results are in view
+    panel.scrollTop = 0;
+    if (innerWidth <= 820) window.scrollTo(0, 0);
+  }
+}
+function editDrive() {
+  setCompact(false);
+  const panel = $('#panel');
+  panel.scrollTop = 0;
+  if (innerWidth <= 820) window.scrollTo(0, 0);
+  const first = $('#stops input');
+  if (first) first.focus({ preventScroll: true });
+}
 function markDirty() { if (state.route && !state.busy) $('#go').classList.add('pulse'); }
 
 /* ================= events ================= */
@@ -2278,6 +2347,8 @@ function bind() {
       case 'lens': state.lens = a.dataset.lens; recompute(); render(); syncURL(); enrichVisible(); break;
       case 'view': state.view = a.dataset.view; state.allLimit = 150; renderResults(); renderMarkers(); renderPicks(); drawSelection(); break;
       case 'more': state.allLimit += 150; renderResults(); break;
+      case 'snip-more': if (id) { state.snipOpen = state.snipOpen === id ? null : id; updateCard(id); } break;
+      case 'edit-drive': editDrive(); break;
       case 'preset': loadStops(PRESETS[+a.dataset.i].stops); break;
       case 'recent': { const r = store.get('recent', [])[+a.dataset.i]; if (r) loadStops(r.stops); break; }
       case 'add-dest': {
@@ -2308,6 +2379,7 @@ function init() {
   routeRenderer = L.svg({ pane: 'routePane' });
   dotRenderer = L.canvas({ pane: 'dotsPane', padding: 0.3 });
   setTiles();
+  watchMapSize();
   if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); (mq.addEventListener ? mq.addEventListener('change', setTiles) : mq.addListener(setTiles)); }
   routeLayer = L.layerGroup().addTo(map);
   stopLayer = L.layerGroup().addTo(map);
