@@ -779,6 +779,20 @@ test('layout: after a search the form folds into a route line; Edit drive brings
   await ctx.close();
 });
 
+test('layout: category chips — Oddities first, then biggest first, empty ones hidden', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  await settle(page, 60000);
+  const chips = await page.$$eval('#lens .chip', bs => bs.map(b => ({ k: b.dataset.lens, n: +b.querySelector('.n').textContent.replace(/,/g, '') })));
+  assert(chips[0].k === 'all', 'All should lead');
+  const rest = chips.slice(1).filter(c => c.k !== 'weird');
+  assert(rest.every((c, i) => i === 0 || rest[i - 1].n >= c.n), `not biggest first: ${JSON.stringify(chips)}`);
+  assert(rest.every(c => c.n > 0), `empty category shown: ${JSON.stringify(chips)}`);
+  if (chips.some(c => c.k === 'weird')) assert(chips[1].k === 'weird', 'Oddities should come right after All');
+  await ctx.close();
+});
+
 test('cards: a long opened description is clamped with More / Less', async () => {
   const world = makeWorld();
   const { page, ctx } = await openPage(world);
