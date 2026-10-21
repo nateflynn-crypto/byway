@@ -252,6 +252,19 @@ footer p{margin:6px 0}
 .guides li .gl{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px}
 .guides li .gl a{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--chip);text-decoration:none;white-space:nowrap}
 .guides li .gl a:hover{border-color:var(--muted)}
+.thentag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;border:1px solid #a8742c;color:#8a5a1c;font-size:10.5px;font-weight:700;letter-spacing:.04em;vertical-align:1px}
+@media (prefers-color-scheme: dark){ .thentag{border-color:#d9a85b;color:#e7c08a} }
+.then{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:start;margin:0 0 10px;padding:8px;border-radius:10px;background:var(--chip)}
+.then img{width:96px;height:72px;object-fit:cover;border-radius:6px;filter:sepia(.15)}
+.then .fine{margin:0;font-size:12.5px;color:var(--muted)}
+.then b{display:block;font-size:13px;color:var(--ink);margin-bottom:2px}
+.vintage .vg{grid-column:1 / -1;display:block}
+.vintage .vt{display:flex;gap:6px;overflow-x:auto;margin:4px 0 2px;scrollbar-width:none}
+.vintage .vt a{display:block;flex:none;line-height:0}
+.vintage .vt img{width:84px;height:63px;object-fit:cover;border-radius:6px;flex:none;filter:sepia(.15)}
+.vintage .vp{color:var(--muted);font-size:12.5px;line-height:1.5}
+.vintage .vp a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+.vintage .vp a:hover{border-bottom-color:var(--muted)}
 .aotag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#1f1b14;color:#f6efe2;font-size:10.5px;font-weight:700;letter-spacing:.04em;vertical-align:1px}
 @media (prefers-color-scheme: dark){ .aotag{background:#f6efe2;color:#1f1b14} }
 .guides .fine{margin:6px 0 0}
@@ -1291,7 +1304,7 @@ async function enrich(items, signal) {
 const state = {
   stops: [], radius: 5, queryRadius: 0, lens: 'all', view: 'shortlist', sort: 'route',
   route: null, raw: new Map(), wikiIdx: new Map(), failedWiki: [], sectionsTotal: 0, finds: [], visible: [], lensTotal: 0, shortlist: [], shortNum: new Map(),
-  picks: new Set(), guidesOpen: false, selectedId: null, allLimit: 150, runId: 0, ctl: null, failed: [], busy: false, bg: false,
+  picks: new Set(), guidesOpen: false, vintageOpen: false, vintage: null, selectedId: null, allLimit: 150, runId: 0, ctl: null, failed: [], busy: false, bg: false,
   navFromHere: store.get('navFromHere', true), qrPart: null,
 };
 let stopSeq = 0;
@@ -1373,6 +1386,8 @@ function recompute() {
     if (m) { m.ao = a.tags.website; m.score += 1.5; if (state.picks.delete(a.id)) state.picks.add(m.id); }
     else state.finds.push(a);
   }
+  // A place John Margolies photographed (the town matches and so does the name) gets its old photo and a nudge up.
+  if (state.vintage) for (const f of state.finds) { f.then = vintageMatch(f); if (f.then) f.score += 1; }
   // Category and corridor filters see every find; only then is the list trimmed to the best CFG.maxFinds.
   const inLens = state.lens === 'all' ? state.finds : state.finds.filter(f => f.cat === state.lens);
   state.lensTotal = inLens.length;
@@ -1398,6 +1413,7 @@ async function run(mode = 'full') {
     let tStep = performance.now();
     const manifestP = loadPlacesManifest(sig); // in parallel with the place lookups
     const privateListP = loadPrivateList();
+    loadVintage().then(v => { if (v && !stale() && state.route) { recompute(); render(); } });
     // Look up every stop at once (not one after another); remembered places return immediately.
     const need = active.filter(s => !s.coord);
     const found = await Promise.all(need.map(s => geocode(s.text, sig)));
@@ -1425,7 +1441,7 @@ async function run(mode = 'full') {
       return;
     }
 
-    state.raw = new Map(); state.wikiIdx = new Map(); state.guidesOpen = false; state.picks.clear(); state.selectedId = null; state.view = 'shortlist';
+    state.raw = new Map(); state.wikiIdx = new Map(); state.guidesOpen = false; state.vintageOpen = false; state.picks.clear(); state.selectedId = null; state.view = 'shortlist';
     state.allLimit = 150; state.failed = []; state.failedWiki = []; state.queryRadius = state.radius;
     recompute(); render();
 
@@ -1622,6 +1638,7 @@ function renderSummary() {
     </div>
     ${navHTML()}
     ${guidesHTML()}
+    ${vintageHTML()}
     <div class="actions">
       <button class="btn sm" type="button" data-action="copy-link">🔗 Copy Byway link</button>
       <button class="btn sm" type="button" data-action="gpx">⬇ GPX</button>
@@ -1691,7 +1708,7 @@ function cardHTML(f) {
   return `<article class="card${sel ? ' sel' : ''}${sel && state.snipOpen === f.id ? ' full' : ''}${picked ? ' picked' : ''}" data-id="${esc(f.id)}" tabindex="0">
     <div class="num" style="--c:${c.color}">${n != null ? n : c.emoji}</div>
     <div class="cbody">
-      <h3>${esc(f.name)}${f.src === 'atlas' || f.ao ? '<span class="aotag" title="On your Atlas Obscura list">Atlas Obscura</span>' : ''}</h3>
+      <h3>${esc(f.name)}${f.src === 'atlas' || f.ao ? '<span class="aotag" title="On your Atlas Obscura list">Atlas Obscura</span>' : ''}${f.then ? `<span class="thentag" title="Photographed by John Margolies for his Roadside America archive">📷 ${f.then.y0}</span>` : ''}</h3>
       <div class="meta">${c.emoji} ${c.label} · mile ${Math.round(f.along).toLocaleString()} · ${offText(f.off)}</div>
       ${sub ? `<div class="sub">${esc(cap(sub))}</div>` : ''}
       ${snip ? `<p class="snip">${esc(snip)}</p>` : ''}
@@ -1726,6 +1743,7 @@ function detailsHTML(f) {
   return `<div class="details">
     ${f.info && f.info.thumb ? `<img class="thumb" src="${esc(f.info.thumb)}" alt="" loading="lazy">` : ''}
     ${f.info === undefined && (f.wiki || f.wd) ? '<div class="loading">Reading up on this one…</div>' : ''}
+    ${f.then ? thenHTML(f.then) : ''}
     <ul class="facts">${facts.map(x => `<li>${x}</li>`).join('')}</ul>
     <div class="links">${linksHTML(f)}</div>
     <div class="cacts">
@@ -2037,6 +2055,102 @@ function guidesHTML() {
      <p class="fine">Their own curated maps of offbeat places, opened on their sites. Atlas Obscura searches around the exact spot; Roadside America maps the town.</p>`;
   return `<details class="guides" id="guides" ${state.guidesOpen ? 'open' : ''}><summary>Oddity guides along this drive</summary>${body}</details>`;
 }
+/* ================= then: John Margolies' Roadside America photos =================
+   The Library of Congress holds about 11,700 photos John Margolies took of roadside America from 1972 to
+   2008, with no known restrictions on publication (data/margolies.json, built by tools/margolies.py).
+   Their coordinates are town centres, and many of the places are gone, so they are listed by town
+   rather than pinned, and a photo is attached to a find only when its name matches a place he
+   photographed in a town nearby. */
+const MRG = {
+  thumb: p => `https://cdn.loc.gov/service/pnp/mrg/${p}_150px.jpg`,
+  item: lccn => `https://www.loc.gov/pictures/collection/mrg/item/${lccn}/`,
+  town: (t, st) => `https://www.loc.gov/pictures/search/?q=${encodeURIComponent(`${t}, ${st}`)}&co=mrg`,
+};
+let vintageP = null;
+function loadVintage() {
+  if (!vintageP) vintageP = fetch('data/margolies.json').then(r => (r.ok ? r.json() : null)).then(d => {
+    if (!d || !Array.isArray(d.towns)) return null;
+    const cells = new Map(), key = (la, lo) => `${Math.floor(la * 4)}:${Math.floor(lo * 4)}`;
+    const towns = d.towns.map(([town, st, lat, lon, places]) => ({
+      town, st, lat, lon,
+      places: places.map(([name, y0, y1, n, interest, pics]) => ({ name, nkey: normName(name), y0, y1, n, interest, pics })),
+    }));
+    for (const t of towns) { const k = key(t.lat, t.lon); (cells.get(k) || cells.set(k, []).get(k)).push(t); }
+    state.vintage = { towns, cells, key, photos: d.photos, match: new Map() };
+    logScan({ kind: 'vintage', towns: towns.length, photos: d.photos });
+    return state.vintage;
+  }).catch(() => null);
+  return vintageP;
+}
+function vintageNear(lat, lon, mi) {
+  const V = state.vintage, out = []; if (!V) return out;
+  const r = Math.ceil(mi / 15) + 1, i0 = Math.floor(lat * 4), j0 = Math.floor(lon * 4);
+  for (let i = i0 - r; i <= i0 + r; i++) for (let j = j0 - r; j <= j0 + r; j++)
+    for (const t of V.cells.get(`${i}:${j}`) || []) if (havMi(lat, lon, t.lat, t.lon) <= mi) out.push(t);
+  return out;
+}
+// Same place? Exact name, one name inside the other (when it's specific enough), or most words shared.
+function sameVintageName(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const [s, l] = a.length <= b.length ? [a, b] : [b, a];
+  if (s.length >= 8 && s.includes(' ') && (` ${l} `).includes(` ${s} `)) return true;
+  const A = nameTokens(a), B = new Set(nameTokens(b));
+  if (A.length < 2 || B.size < 2) return false;
+  return A.filter(w => B.has(w)).length / Math.min(A.length, B.size) >= 0.75;
+}
+function vintageMatch(f) {
+  const memo = state.vintage.match;
+  if (memo.has(f.id)) return memo.get(f.id);
+  let hit = null;
+  for (const t of vintageNear(f.lat, f.lon, 10)) {
+    for (const p of t.places) if (p.pics.length && sameVintageName(p.nkey, f.nkey)) { hit = { ...p, town: t.town, st: t.st }; break; }
+    if (hit) break;
+  }
+  memo.set(f.id, hit);
+  return hit;
+}
+function thenHTML(p) {
+  const pic = p.pics[0], years = p.y0 === p.y1 || !p.y1 ? `${p.y0}` : `${p.y0}–${p.y1}`;
+  return `<a class="then" href="${esc(MRG.item(pic[1]))}" target="_blank" rel="noopener" style="text-decoration:none">
+    <img src="${esc(MRG.thumb(pic[0]))}" alt="${esc(pic[2])}" loading="lazy">
+    <div><b>Then: ${esc(years)}</b><p class="fine">John Margolies photographed this for his Roadside America archive${p.n > 1 ? ` (${p.n} photos)` : ''}. Library of Congress ↗</p></div></a>`;
+}
+// Towns along the drive that he photographed, in driving order (centre within the corridor plus 3 mi).
+function vintageTowns(route) {
+  const V = state.vintage; if (!V) return null;
+  const k = `${state.radius}`;
+  if (route.vintage && route.vintage.k === k) return route.vintage.list;
+  const R = state.radius + 3, list = [], pad = R / 50;
+  let s = 90, n = -90, w = 180, e = -180;
+  for (const [la, lo] of route.pts) { s = Math.min(s, la); n = Math.max(n, la); w = Math.min(w, lo); e = Math.max(e, lo); }
+  for (const t of V.towns) {
+    if (t.lat < s - pad || t.lat > n + pad || t.lon < w - pad * 1.5 || t.lon > e + pad * 1.5) continue;
+    const p = project(route.idx, t.lat, t.lon, R);
+    if (p) list.push({ ...t, along: p.along });
+  }
+  list.sort((a, b) => a.along - b.along);
+  route.vintage = { k, list };
+  return list;
+}
+function vintageHTML() {
+  const r = state.route; if (!r || !state.vintage) return '';
+  const towns = vintageTowns(r);
+  if (!towns || !towns.length) return '';
+  const nPlaces = towns.reduce((n, t) => n + t.places.length, 0);
+  const body = !state.vintageOpen ? '' : `<ol>${towns.map(t => {
+    const top = t.places.slice(0, 6), more = t.places.length - top.length;
+    const pics = t.places.filter(p => p.pics.length).slice(0, 4);
+    return `<li><b>${esc(t.town)}, ${esc(t.st)}</b><span class="mi">mile ${Math.round(t.along).toLocaleString()}</span>
+      <span class="vg">
+        <span class="vt">${pics.map(p => `<a href="${esc(MRG.item(p.pics[0][1]))}" target="_blank" rel="noopener" title="${esc(p.pics[0][2])}"><img src="${esc(MRG.thumb(p.pics[0][0]))}" alt="${esc(p.name)}" loading="lazy"></a>`).join('')}</span>
+        <span class="vp">${top.map(p => `<a href="${esc(MRG.item(p.pics[0] ? p.pics[0][1] : ''))}" target="_blank" rel="noopener">${esc(p.name)}</a> ${esc(String(p.y0 || ''))}`).join(' · ')}${more > 0 ? ` · <a href="${esc(MRG.town(t.town, t.st))}" target="_blank" rel="noopener">+${more} more ↗</a>` : ''}</span>
+      </span></li>`;
+  }).join('')}</ol>
+    <p class="fine">Photos John Margolies took for his Roadside America archive between 1972 and 2008, now at the Library of Congress. They're placed by town, and many of these places have since closed or been torn down.</p>`;
+  return `<details class="guides vintage" id="vintage" ${state.vintageOpen ? 'open' : ''}><summary>Roadside America, then · ${nPlaces.toLocaleString()} place${nPlaces > 1 ? 's' : ''} in ${towns.length} town${towns.length > 1 ? 's' : ''}</summary>${body}</details>`;
+}
+
 function openGuides() { if (state.route) { state.guidesOpen = true; renderSummary(); } }
 
 /* ================= export / sharing ================= */
@@ -2395,6 +2509,7 @@ function bind() {
     }
   });
   document.addEventListener('toggle', e => {
+    if (e.target.id === 'vintage') { if (e.target.open !== state.vintageOpen) { state.vintageOpen = e.target.open; if (state.vintageOpen) renderSummary(); } return; }
     if (e.target.id !== 'guides') return;
     if (e.target.open && !state.guidesOpen) openGuides();
     else if (!e.target.open) state.guidesOpen = false;
@@ -2438,7 +2553,7 @@ function init() {
   if (from && to) run();
 }
 
-window.__byway = { QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, sectionCells, OSM_RULES, guidePoints, townOf, loadPrivateList, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
+window.__byway = { loadVintage, vintageMatch, vintageTowns, sameVintageName, QR, navParts, simplify, cumulative, indexRoute, project, classify, curate, dedupe, normName, parseCoord, stripCoord, photonLabel, makeChunks, overpassQuery, state, CFG, hostState, cacheGet, qHash, spreadCap, shortlistSize, recallPlace, sectionCells, OSM_RULES, guidePoints, townOf, loadPrivateList, scanLog, scanLogJSON, exportFixture, wikiPoints, wikiTags };
 if (window.L) init();
 else document.body.insertAdjacentHTML('afterbegin', '<p style="padding:12px;background:#fde;margin:0">Couldn\'t load the map library — check your internet connection and reload.</p>');
 })();
