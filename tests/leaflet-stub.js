@@ -20,7 +20,7 @@
       m.setView = (c, z) => { center = { lat: c[0], lng: c[1] }; zoom = z; return m; };
       m.createPane = () => ({ style: {} });
       m.getCenter = () => center; m.getZoom = () => zoom;
-      m.fitBounds = () => m; m.flyTo = (c, z) => { center = { lat: c[0], lng: c[1] }; zoom = z; return m; };
+      m.fitBounds = () => m; m.invalidateSize = () => m; m.flyTo = (c, z) => { center = { lat: c[0], lng: c[1] }; zoom = z; return m; };
       return m;
     },
     tileLayer: layer, svg: () => ({}), canvas: () => ({}),
