@@ -135,6 +135,11 @@ async function handle(route, world) {
     world.requests.push({ kind: 'private' });
     return route.fulfill({ status: 200, contentType: 'application/json', body: fs.readFileSync(testPrivate().file, 'utf8') });
   }
+  if (host === 'byway.test' && u.pathname === '/data/margolies.json') {
+    world.requests.push({ kind: 'vintage' });
+    if (!world.vintage) return route.fulfill({ status: 404, contentType: 'text/plain', body: 'not found' });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(world.vintage) });
+  }
   if (host === 'byway.test') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: HTML });
   if (host === 'cdnjs.cloudflare.com' && /leaflet.*\.js$/.test(u.pathname)) return route.fulfill({ status: 200, contentType: 'application/javascript', body: LEAFLET_JS });
   if (host === 'cdnjs.cloudflare.com' && /leaflet.*\.css$/.test(u.pathname)) return route.fulfill({ status: 200, contentType: 'text/css', body: LEAFLET_CSS });
@@ -810,6 +815,46 @@ test('cards: a long opened description is clamped with More / Less', async () =>
   await page.click(`${card} .snipmore`);
   const h2 = await page.evaluate(s => document.querySelector(s + ' .snip').getBoundingClientRect().height, card);
   assert(h2 > h1 * 1.5 && (await page.textContent(`${card} .snipmore`)) === 'Less', `not expanded: ${h1} → ${h2}`);
+  await ctx.close();
+});
+
+test('then: Margolies photos — a matching find gets its old photo; towns along the drive are listed', async () => {
+  const world = makeWorld();
+  const gnome = FIX.elements.find(e => (e.tags || {}).name === "World's Largest Garden Gnome");
+  const g = gnome.lat != null ? [gnome.lat, gnome.lon] : [gnome.center.lat, gnome.center.lon];
+  world.vintage = { v: 1, photos: 5, towns: [
+    ['Gnomeville', 'NY', g[0] + 0.03, g[1] + 0.02, [
+      ["World's Largest Garden Gnome", 1984, 1986, 2, 3, [['00100/00123', '2017700001', "World's Largest Garden Gnome, Gnomeville, New York"]]],
+      ['Gulf station', 1979, 1979, 1, 1, [['00100/00124', '2017700002', 'Gulf station, Gnomeville, New York']]],
+    ]],
+    ['Far Away', 'CA', 34.0, -118.2, [['Big Donut', 1977, 1977, 1, 3, [['00100/00125', '2017700003', 'Big Donut, Far Away, California']]]]],
+  ] };
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  await settle(page, 60000);
+  await page.waitForFunction(() => !!window.__byway.state.vintage);
+  const r = await page.evaluate(() => {
+    const S = window.__byway.state, f = S.finds.find(x => x.name === "World's Largest Garden Gnome");
+    const others = S.finds.filter(x => x.then && x !== f).map(x => x.name);
+    return { then: f && f.then && f.then.y0, others, summary: document.querySelector('#vintage summary') && document.querySelector('#vintage summary').textContent };
+  });
+  assert(r.then === 1984, `gnome not matched: ${JSON.stringify(r)}`);
+  assert(r.others.length === 0, `unrelated finds matched: ${r.others}`);
+  assert(/2 places in 1 town/.test(r.summary || ''), `vintage section: ${r.summary}`);
+  await page.click('#vintage summary');
+  const li = await page.textContent('#vintage li');
+  assert(/Gnomeville, NY/.test(li) && /Gulf station/.test(li), `town list: ${li}`);
+  await ctx.close();
+});
+
+test('then: no photo file → nothing shown, nothing breaks', async () => {
+  const world = makeWorld();
+  const { page, ctx } = await openPage(world);
+  await scanWithFastTimers(page);
+  const r = await settle(page, 60000);
+  assert(/Found/.test(r.status), r.status);
+  assert(!(await page.$('#vintage')), 'vintage section shown without data');
+  assert(!(world.pageErrors || []).length, `page errors: ${world.pageErrors}`);
   await ctx.close();
 });
 

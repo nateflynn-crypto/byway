@@ -15,7 +15,7 @@ Everything runs in the browser — one self-contained `index.html`, no build ste
 | Place search & "use my location" | [Photon](https://photon.komoot.io) (OpenStreetMap), Nominatim fallback |
 | Driving route | [OSRM](https://project-osrm.org) public servers |
 | Places along the route | Wikipedia articles near the route (geosearch), then OpenStreetMap via the [Overpass API](https://overpass-api.de) |
-| Descriptions & photos | Wikipedia / Wikidata |
+| Descriptions & photos | Wikipedia / Wikidata; vintage photos from the Library of Congress (John Margolies archive) |
 | Map tiles | © OpenStreetMap contributors (tile.openstreetmap.org) |
 | Navigation handoff | Google Maps URLs (`dir_action=navigate`) |
 
@@ -34,6 +34,10 @@ The app loads `index.json` while it looks up your stops. Any stretch of road who
 `private/places.enc.json` is a personal list of places (currently an Atlas Obscura export for the East Coast, Maine to Florida) encrypted with AES-256-GCM. It's public on GitHub but unreadable without the key. Opening a Byway link ending in `#key=…` once stores the key in that browser and removes it from the address bar; `#key=forget` removes it. With a key, Byway downloads and decrypts the list in the browser on each visit (it never stores it unencrypted). Places near the route join the finds, and places that match an existing find are merged into it. Without a key, nothing changes.
 
 To rebuild or re-key it, use `tools/private_list.mjs` (`newkey`, `atlas`, `encrypt`, `decrypt`). Keep plain lists and keys out of the repo; `.gitignore` blocks them.
+
+### Roadside America, then (John Margolies photos)
+
+`data/margolies.json` lists the John Margolies Roadside America photograph archive at the Library of Congress: about 11,700 photos of motels, diners, mini golf, signs and giant roadside figures taken from 1972 to 2008, with no known restrictions on publication. `tools/margolies.py` builds it from the Library's spreadsheet, grouping each town's photos by place. The archive's coordinates are town centres and many of the places are gone, so they aren't pinned on the map. Instead, "Roadside America, then" lists the towns along the drive with thumbnails and links to the Library's pages. A find whose name matches a place he photographed within 10 mi gets his photo on its card ("📷 1995") and a small score boost.
 
 Route links keep the trip in the address (`?from=…&via=…&to=…`), so a link reopens the same drive.
 
