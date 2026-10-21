@@ -1994,8 +1994,9 @@ function privateTags(t) {
 const STOPWORDS = new Set(['and', 'the', 'of', 'at', 'in', 'on', 'for', 'site', 'park', 'state', 'historic', 'national', 'new', 'york']);
 const nameTokens = k => k.split(' ').filter(w => w.length > 2 && !STOPWORDS.has(w));
 function sameNamedPlace(a, b) {
-  if (a.nkey === b.nkey) return havMi(a.lat, a.lon, b.lat, b.lon) < 1;
-  if (havMi(a.lat, a.lon, b.lat, b.lon) > 0.35) return false;
+  const loose = a.tags._approx === 'town' || b.tags._approx === 'town'; // only the town centre is known: allow for it
+  if (a.nkey === b.nkey) return havMi(a.lat, a.lon, b.lat, b.lon) < (loose ? 6 : 1);
+  if (havMi(a.lat, a.lon, b.lat, b.lon) > (loose ? 4 : 0.35)) return false;
   const A = nameTokens(a.nkey), B = new Set(nameTokens(b.nkey));
   if (!A.length || !B.size) return false;
   return A.filter(w => B.has(w)).length / Math.min(A.length, B.size) >= 0.6;
