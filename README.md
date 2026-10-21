@@ -31,9 +31,11 @@ The app loads `index.json` while it looks up your stops. Any stretch of road who
 
 ### Private list
 
-`private/places.enc.json` is a personal list of places (currently an Atlas Obscura export for the East Coast, Maine to Florida) encrypted with AES-256-GCM. It's public on GitHub but unreadable without the key. Opening a Byway link ending in `#key=…` once stores the key in that browser and removes it from the address bar; `#key=forget` removes it. With a key, Byway downloads and decrypts the list in the browser on each visit (it never stores it unencrypted). Places near the route join the finds, and places that match an existing find are merged into it. Without a key, nothing changes.
+`private/places.enc.json` is a personal list of places encrypted with AES-256-GCM: an Atlas Obscura export (4,149 places) and a Roadside America list (4,372 places), both East Coast, Maine to Florida. It's public on GitHub but unreadable without the key. Opening a Byway link ending in `#key=…` once stores the key in that browser and removes it from the address bar; `#key=forget` removes it. With a key, Byway downloads and decrypts the list in the browser on each visit (it never stores it unencrypted). Places near the route join the finds, and places that match an existing find are merged into it. Without a key, nothing changes.
 
-To rebuild or re-key it, use `tools/private_list.mjs` (`newkey`, `atlas`, `encrypt`, `decrypt`). Keep plain lists and keys out of the repo; `.gitignore` blocks them.
+Roadside America places come without coordinates, so they were located once: street addresses with the US Census geocoder, the rest by matching the name against the places index near the town, and otherwise the town centre. Places only known to the town centre say so on their card and count for a little less. A place on both lists, or matching a Wikipedia/OpenStreetMap find, is merged into one card with both tags.
+
+To rebuild or re-key it, use `tools/private_list.mjs` (`newkey`, `atlas`, `roadside`, `merge`, `encrypt`, `decrypt`). Keep plain lists and keys out of the repo; `.gitignore` blocks them.
 
 ### Roadside America, then (John Margolies photos)
 
