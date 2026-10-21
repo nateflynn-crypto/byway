@@ -193,6 +193,9 @@ footer p{margin:6px 0}
 /* map bits */
 .mkwrap{background:none;border:0}
 .mk{width:26px;height:26px;border-radius:50%;background:var(--c);color:#fff;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4);display:grid;place-items:center;font:700 11px/1 Inter,system-ui,sans-serif}
+.mk.ao{box-shadow:0 0 0 2px #1f1b14,0 1px 5px rgba(0,0,0,.4)}
+.mk.ao::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px dashed #1f1b14;opacity:.55}
+.mk{position:relative}
 .mkstar{width:18px;height:18px;border-radius:50%;background:var(--mustard);color:#1f1b14;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);display:grid;place-items:center;font-size:11px;line-height:1}
 .pin{width:30px;height:30px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:#1f1b14;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);display:grid;place-items:center}
 .pin span{transform:rotate(45deg);color:#fff;font:700 12px/1 Inter,system-ui,sans-serif}
@@ -216,6 +219,11 @@ footer p{margin:6px 0}
   #map{order:-1;position:sticky;top:0;height:42vh;z-index:5;border-bottom:1px solid var(--line)}
   .panel{overflow:visible;border-right:0;padding:18px max(16px,env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
   .card{scroll-margin-top:calc(42vh + 12px)}
+  .lens{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-left:-16px;margin-right:-16px;padding:0 16px 2px}
+  .lens::-webkit-scrollbar{display:none}
+  .chip{flex:none}
+  .leaflet-popup-content{margin:10px 12px}
+  .pop p{display:none}
   .stats b{font-size:19px}
   .qr{flex-direction:column;align-items:flex-start}
   h1{font-size:38px}
@@ -232,12 +240,20 @@ footer p{margin:6px 0}
 #dbg td.w{white-space:normal}
 #dbg tr.fail td{color:var(--accent)}
 #dbg tr.cache td{color:var(--muted)}
-.guides{margin:10px 0 4px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px 12px}
+.guides{margin:10px 0 4px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px 12px}
 .guides summary{cursor:pointer;font-weight:600;font-size:14px}
-.guides ol{list-style:none;margin:8px 0 2px;padding:0;display:grid;gap:6px}
-.guides li{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:13.5px}
-.guides li .mi{color:var(--muted);font-size:12px;min-width:52px}
-.guides li a{font-size:12.5px}
+.guides summary::marker{color:var(--muted)}
+.guides ol{list-style:none;margin:10px 0 2px;padding:0 0 0 14px;display:grid;gap:10px;position:relative}
+.guides ol::before{content:"";position:absolute;left:3px;top:6px;bottom:6px;border-left:2px dashed var(--line)}
+.guides li{position:relative;display:grid;grid-template-columns:1fr auto;gap:4px 8px;font-size:13.5px;align-items:baseline}
+.guides li::before{content:"";position:absolute;left:-14px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.guides li b{font-weight:650}
+.guides li .mi{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;text-align:right}
+.guides li .gl{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px}
+.guides li .gl a{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--chip);text-decoration:none;white-space:nowrap}
+.guides li .gl a:hover{border-color:var(--muted)}
+.aotag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#1f1b14;color:#f6efe2;font-size:10.5px;font-weight:700;letter-spacing:.04em;vertical-align:1px}
+@media (prefers-color-scheme: dark){ .aotag{background:#f6efe2;color:#1f1b14} }
 .guides .fine{margin:6px 0 0}
 </style>
 </head>
@@ -1647,7 +1663,11 @@ function navHTML() {
 function renderLens() {
   const counts = {};
   for (const f of state.finds) counts[f.cat] = (counts[f.cat] || 0) + 1;
-  const opts = [['all', 'All', '✨', state.finds.length], ...Object.entries(CATS).map(([k, c]) => [k, c.label, c.emoji, counts[k] || 0])];
+  // Oddities lead (they're the point); the rest go biggest first, and empty ones drop out.
+  const cats = Object.entries(CATS).map(([k, c]) => [k, c.label, c.emoji, counts[k] || 0])
+    .filter(o => o[3] > 0 || o[0] === state.lens || o[0] === 'weird')
+    .sort((a, b) => (b[0] === 'weird') - (a[0] === 'weird') || b[3] - a[3]);
+  const opts = [['all', 'All', '✨', state.finds.length], ...cats];
   $('#lens').innerHTML = opts.map(([k, l, e, n]) =>
     `<button class="chip" type="button" data-action="lens" data-lens="${k}" aria-pressed="${state.lens === k}" ${n === 0 && k !== 'all' && state.lens !== k ? 'disabled' : ''}>${e} ${l}<span class="n">${n.toLocaleString()}</span></button>`).join('');
 }
@@ -1671,8 +1691,8 @@ function cardHTML(f) {
   return `<article class="card${sel ? ' sel' : ''}${sel && state.snipOpen === f.id ? ' full' : ''}${picked ? ' picked' : ''}" data-id="${esc(f.id)}" tabindex="0">
     <div class="num" style="--c:${c.color}">${n != null ? n : c.emoji}</div>
     <div class="cbody">
-      <h3>${esc(f.name)}</h3>
-      <div class="meta">${c.emoji} ${c.label} · mile ${Math.round(f.along).toLocaleString()} · ${offText(f.off)}${f.src === 'atlas' || f.ao ? ' · Atlas Obscura' : ''}</div>
+      <h3>${esc(f.name)}${f.src === 'atlas' || f.ao ? '<span class="aotag" title="On your Atlas Obscura list">Atlas Obscura</span>' : ''}</h3>
+      <div class="meta">${c.emoji} ${c.label} · mile ${Math.round(f.along).toLocaleString()} · ${offText(f.off)}</div>
       ${sub ? `<div class="sub">${esc(cap(sub))}</div>` : ''}
       ${snip ? `<p class="snip">${esc(snip)}</p>` : ''}
       ${sel && snip.length > 240 ? `<button class="snipmore" type="button" data-action="snip-more">${state.snipOpen === f.id ? 'Less' : 'More'}</button>` : ''}
@@ -1752,6 +1772,7 @@ function setTiles() {
 function drawRoute(active, fit) {
   routeLayer.clearLayers(); stopLayer.clearLayers();
   const pts = state.route.pts;
+  band = L.polyline(pts, { renderer: routeRenderer, color: ACCENT, opacity: isDark() ? 0.16 : 0.11, weight: bandWeight(), lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer);
   L.polyline(pts, { renderer: routeRenderer, color: isDark() ? '#000' : '#fff', opacity: isDark() ? 0.6 : 0.95, weight: 9, interactive: false }).addTo(routeLayer);
   L.polyline(pts, { renderer: routeRenderer, color: ACCENT, weight: 4.5, interactive: false }).addTo(routeLayer);
   active.forEach((s, i) => {
@@ -1763,6 +1784,16 @@ function drawRoute(active, fit) {
   });
   if (fit) fitRoute(L.latLngBounds(pts));
 }
+// The detour corridor as a soft band along the road: its width in pixels is the corridor's
+// width in miles at the map's current zoom (measured at the middle of the drive).
+let band = null;
+function bandWeight() {
+  const r = state.route; if (!r) return 0;
+  const lats = r.pts.map(p => p[0]), lat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const mPerPx = 40075016.686 * Math.cos(lat * Math.PI / 180) / Math.pow(2, map.getZoom() + 8);
+  return Math.min(6000, 2 * state.radius * 1609.344 / mPerPx);
+}
+function updateBand() { if (band && band.setStyle) band.setStyle({ weight: bandWeight() }); }
 // Fit the drive in view. Until the user pans, zooms or opens a stop, a change in the map's size
 // (phone rotation, the panel folding after a search) fits it again.
 const fitView = { bounds: null, auto: false };
@@ -1785,7 +1816,7 @@ function watchMapSize() {
     });
   }).observe(el);
 }
-const numIcon = (n, color) => L.divIcon({ className: 'mkwrap', html: `<div class="mk" style="--c:${color}">${n}</div>`, iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -12] });
+const numIcon = (n, color, ao) => L.divIcon({ className: 'mkwrap', html: `<div class="mk${ao ? ' ao' : ''}" style="--c:${color}">${n}</div>`, iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -12] });
 function popupHTML(f) {
   const c = CATS[f.cat], picked = state.picks.has(f.id);
   const snip = snippet(f) || subtitle(f);
@@ -1803,9 +1834,11 @@ function popupHTML(f) {
     </div>
   </div>`;
 }
+const isAO = f => f.src === 'atlas' || !!f.ao;
 function addFindMarker(f, layer) {
   layer.on('click', () => selectFind(f.id, 'map'));
-  layer.bindPopup(() => popupHTML(f), { maxWidth: 280, autoPanPadding: [30, 30] });
+  const phone = innerWidth <= 820;
+  layer.bindPopup(() => popupHTML(f), { maxWidth: phone ? 230 : 280, autoPanPadding: phone ? [12, 12] : [30, 30] });
   markerById.set(f.id, layer);
   layer.addTo(findLayer);
 }
@@ -1816,12 +1849,14 @@ function renderMarkers() {
   if (state.view === 'shortlist') {
     const ids = new Set(state.shortlist.map(f => f.id));
     for (const f of vis) if (!ids.has(f.id))
-      addFindMarker(f, L.circleMarker([f.lat, f.lon], { renderer: dotRenderer, radius: 4, stroke: false, fillColor: CATS[f.cat].color, fillOpacity: 0.45 }));
+      addFindMarker(f, L.circleMarker([f.lat, f.lon], isAO(f)
+        ? { renderer: dotRenderer, radius: 4.5, color: '#1f1b14', weight: 1.5, opacity: 0.8, fillColor: CATS[f.cat].color, fillOpacity: 0.7 }
+        : { renderer: dotRenderer, radius: 4, stroke: false, fillColor: CATS[f.cat].color, fillOpacity: 0.45 }));
     for (const f of state.shortlist)
-      addFindMarker(f, L.marker([f.lat, f.lon], { icon: numIcon(state.shortNum.get(f.id), CATS[f.cat].color), riseOnHover: true, zIndexOffset: 100, keyboard: false }));
+      addFindMarker(f, L.marker([f.lat, f.lon], { icon: numIcon(state.shortNum.get(f.id), CATS[f.cat].color, isAO(f)), riseOnHover: true, zIndexOffset: 100, keyboard: false }));
   } else {
     for (const f of vis)
-      addFindMarker(f, L.circleMarker([f.lat, f.lon], { renderer: dotRenderer, radius: 6, color: '#fff', weight: 1.5, fillColor: CATS[f.cat].color, fillOpacity: 0.95 }));
+      addFindMarker(f, L.circleMarker([f.lat, f.lon], { renderer: dotRenderer, radius: isAO(f) ? 7 : 6, color: isAO(f) ? '#1f1b14' : '#fff', weight: isAO(f) ? 2.5 : 1.5, fillColor: CATS[f.cat].color, fillOpacity: 0.95 }));
   }
 }
 function renderPicks() {
@@ -1998,7 +2033,7 @@ function guidesHTML() {
     loadGuides(r).then(() => { if (state.route === r) renderSummary(); });
   }
   const body = !state.guidesOpen ? '' : !r.guides ? '<p class="fine">Finding towns along the way…</p>' :
-    `<ol>${r.guides.map(g => `<li><span class="mi">mile ${Math.round(g.mi).toLocaleString()}</span><b>${g.town ? `${esc(g.town.town)}, ${esc(g.town.code)}` : 'Along the way'}</b>${guideLinksHTML(g.lat, g.lon, g.town)}</li>`).join('')}</ol>
+    `<ol>${r.guides.map(g => `<li><b>${g.town ? `${esc(g.town.town)}, ${esc(g.town.code)}` : 'Along the way'}</b><span class="mi">mile ${Math.round(g.mi).toLocaleString()}</span><span class="gl">${guideLinksHTML(g.lat, g.lon, g.town)}</span></li>`).join('')}</ol>
      <p class="fine">Their own curated maps of offbeat places, opened on their sites. Atlas Obscura searches around the exact spot; Roadside America maps the town.</p>`;
   return `<details class="guides" id="guides" ${state.guidesOpen ? 'open' : ''}><summary>Oddity guides along this drive</summary>${body}</details>`;
 }
@@ -2311,6 +2346,7 @@ function bind() {
   radius.addEventListener('input', () => {
     state.radius = +radius.value;
     $('#radiusOut').textContent = `${state.radius} mi`;
+    updateBand();
     if (!state.route || state.busy) return;
     if (state.bg) { // OpenStreetMap still checking: keep its progress line
       if (state.radius <= state.queryRadius) { recompute(); render(); syncURL(); } else { markDirty(); toast(`Wider than the last scan (${state.queryRadius} mi) — tap “Find fun stops” to rescan.`); }
@@ -2380,6 +2416,7 @@ function init() {
   dotRenderer = L.canvas({ pane: 'dotsPane', padding: 0.3 });
   setTiles();
   watchMapSize();
+  map.on('zoomend', updateBand);
   if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); (mq.addEventListener ? mq.addEventListener('change', setTiles) : mq.addListener(setTiles)); }
   routeLayer = L.layerGroup().addTo(map);
   stopLayer = L.layerGroup().addTo(map);
