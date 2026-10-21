@@ -267,6 +267,7 @@ footer p{margin:6px 0}
 .vintage .vp a:hover{border-bottom-color:var(--muted)}
 .aotag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#1f1b14;color:#f6efe2;font-size:10.5px;font-weight:700;letter-spacing:.04em;vertical-align:1px}
 @media (prefers-color-scheme: dark){ .aotag{background:#f6efe2;color:#1f1b14} }
+.aotag.ratag{background:#b3261e;color:#fff}
 .guides .fine{margin:6px 0 0}
 </style>
 </head>
@@ -1332,10 +1333,10 @@ function ingest(els) {
   for (const el of els) {
     const id = `${el.type}/${el.id}`;
     if (state.raw.has(id)) continue;
-    const isWP = el.type === 'wp', isAO = el.type === 'ao';
+    const isWP = el.type === 'wp', isRA = el.type === 'ra', isAO = el.type === 'ao' || isRA; // isAO: any private-list place
     let t = el.tags || {}, adj = 0;
     const keys = isAO ? [] : wikiKeys(t);
-    if (isAO) { t = privateTags(t); adj = 2; } // hand-picked by people who look for curiosities
+    if (isAO) { t = privateTags(t); adj = t._approx === 'town' ? 1 : 2; } // hand-picked by people who look for curiosities; a town-centre location counts for less
     else if (isWP) {
       if (keys.some(k => state.wikiIdx.has(k))) continue; // already known, from either source
       const m = wikiTags(t); if (!m) continue;
@@ -1361,10 +1362,11 @@ function ingest(els) {
     let { cat, base } = classify(t, name);
     if (isAO && cat === 'attraction') cat = 'weird';
     state.raw.set(id, {
-      id, type: el.type, osmId: isWP || isAO ? null : el.id, src: isWP ? 'wikipedia' : isAO ? 'atlas' : 'osm', name, lat, lon, tags: t, cat, base: base + adj, off: p.off, along: p.along, score: 0,
+      id, type: el.type, osmId: isWP || isAO ? null : el.id, src: isWP ? 'wikipedia' : isRA ? 'roadside' : isAO ? 'atlas' : 'osm', name, lat, lon, tags: t, cat, base: base + adj, off: p.off, along: p.along, score: 0,
       nkey: normName(name), wiki: wikiRef(t), wd: /^Q\d+$/.test(t.wikidata || '') ? t.wikidata : null, info: undefined,
     });
     for (const k of keys) state.wikiIdx.set(k, id);
+    if (isRA) { const m = /^(.*), ([A-Z]{2})$/.exec(t['addr:place'] || ''); if (m) state.raw.get(id).town = { town: m[1], code: m[2] }; } // its own town, for the Roadside America link
   }
 }
 function reproject() {
@@ -1377,13 +1379,18 @@ function recompute() {
   if (!state.route) { state.finds = []; state.visible = []; state.lensTotal = 0; state.shortlist = []; state.shortNum = new Map(); return; }
   const within = [];
   const priv = [];
-  for (const f of state.raw.values()) if (f.off <= state.radius) { f.score = f.base - 0.22 * f.off; f.ao = null; (f.src === 'atlas' ? priv : within).push(f); }
+  for (const f of state.raw.values()) if (f.off <= state.radius) { f.score = f.base - 0.22 * f.off; f.ao = null; f.ra = false; (isPrivSrc(f) ? priv : within).push(f); }
+  priv.sort((a, b) => (a.src === 'atlas' ? 0 : 1) - (b.src === 'atlas' ? 0 : 1)); // Atlas Obscura first, so a Roadside America twin merges into it
   state.finds = dedupe(within);
   // A private-list place that matches a find already on the list is merged into it (link + a boost)
   // instead of showing twice.
   for (const a of priv) {
     const m = state.finds.find(f => sameNamedPlace(a, f));
-    if (m) { m.ao = a.tags.website; m.score += 1.5; if (state.picks.delete(a.id)) state.picks.add(m.id); }
+    if (m) {
+      if (a.src === 'atlas') { if (!m.ao && m.src !== 'atlas') { m.ao = a.tags.website; m.score += 1.5; } }
+      else if (!m.ra && m.src !== 'roadside') { m.ra = true; m.score += 1.5; }
+      if (state.picks.delete(a.id)) state.picks.add(m.id);
+    }
     else state.finds.push(a);
   }
   // A place John Margolies photographed (the town matches and so does the name) gets its old photo and a nudge up.
@@ -1449,7 +1456,7 @@ async function run(mode = 'full') {
       if (!list || stale()) return;
       const els = privateElements(list, route, state.queryRadius);
       ingest(els); recompute(); render();
-      logScan({ kind: 'private', places: list.places.length, nearRoute: els.length, finds: [...state.raw.values()].filter(f => f.src === 'atlas').length });
+      logScan({ kind: 'private', places: list.places.length, nearRoute: els.length, finds: [...state.raw.values()].filter(isPrivSrc).length });
     });
 
     // Pass 1: Wikipedia — quick and dependable; finds the notable places.
@@ -1694,7 +1701,7 @@ function sortList(list) {
   else list.sort((a, b) => a.along - b.along);
   return list;
 }
-function snippet(f) { return (f.info && f.info.extract) || f.tags.description || ''; }
+function snippet(f) { return (f.info && f.info.extract) || (f.src === 'roadside' ? '' : f.tags.description) || ''; }
 function subtitle(f) { return (f.info && f.info.desc) || f.wdDesc || ''; }
 function website(t) {
   const u = t.website || t['contact:website'] || t.url;
@@ -1708,7 +1715,7 @@ function cardHTML(f) {
   return `<article class="card${sel ? ' sel' : ''}${sel && state.snipOpen === f.id ? ' full' : ''}${picked ? ' picked' : ''}" data-id="${esc(f.id)}" tabindex="0">
     <div class="num" style="--c:${c.color}">${n != null ? n : c.emoji}</div>
     <div class="cbody">
-      <h3>${esc(f.name)}${f.src === 'atlas' || f.ao ? '<span class="aotag" title="On your Atlas Obscura list">Atlas Obscura</span>' : ''}${f.then ? `<span class="thentag" title="Photographed by John Margolies for his Roadside America archive">📷 ${f.then.y0}</span>` : ''}</h3>
+      <h3>${esc(f.name)}${f.src === 'atlas' || f.ao ? '<span class="aotag" title="On your Atlas Obscura list">Atlas Obscura</span>' : ''}${isRA(f) ? '<span class="aotag ratag" title="On your Roadside America list">Roadside America</span>' : ''}${f.then ? `<span class="thentag" title="Photographed by John Margolies for his Roadside America archive">📷 ${f.then.y0}</span>` : ''}</h3>
       <div class="meta">${c.emoji} ${c.label} · mile ${Math.round(f.along).toLocaleString()} · ${offText(f.off)}</div>
       ${sub ? `<div class="sub">${esc(cap(sub))}</div>` : ''}
       ${snip ? `<p class="snip">${esc(snip)}</p>` : ''}
@@ -1736,6 +1743,9 @@ function linksHTML(f) {
 function detailsHTML(f) {
   const t = f.tags, picked = state.picks.has(f.id);
   const facts = [esc(detourText(f.off))];
+  if (f.src === 'roadside' && t.description) facts.push(`Address: ${esc(t.description)}, ${esc(t['addr:place'] || '')}`);
+  if (t._approx === 'town') facts.push('Location is the town centre (the address couldn’t be pinned) — the real spot may be a few miles off');
+  else if (t._approx) facts.push('Location is approximate');
   if (t.opening_hours) facts.push(`Hours (from OSM, may be stale): ${esc(t.opening_hours)}`);
   if (t.fee) facts.push(`Fee: ${esc(t.fee)}`);
   if (t.artist_name) facts.push(`Artist: ${esc(t.artist_name)}`);
@@ -1852,7 +1862,9 @@ function popupHTML(f) {
     </div>
   </div>`;
 }
-const isAO = f => f.src === 'atlas' || !!f.ao;
+const isPrivSrc = f => f.src === 'atlas' || f.src === 'roadside';
+const isRA = f => f.src === 'roadside' || !!f.ra;
+const isAO = f => f.src === 'atlas' || !!f.ao || isRA(f); // on one of your lists: ringed on the map
 function addFindMarker(f, layer) {
   layer.on('click', () => selectFind(f.id, 'map'));
   const phone = innerWidth <= 820;
@@ -1968,11 +1980,12 @@ function privateElements(list, route, R) {
   for (const [la, lo] of route.pts) { s = Math.min(s, la); n = Math.max(n, la); w = Math.min(w, lo); e = Math.max(e, lo); }
   const pad = (R + 1) / MI_PER_DEG, padLon = pad / Math.cos(rad((s + n) / 2));
   return list.places.filter(p => p[3] >= s - pad && p[3] <= n + pad && p[4] >= w - padLon && p[4] <= e + padLon)
-    .map(([id, name, sub, lat, lon, url, town]) => ({ type: 'ao', id, lat, lon, tags: { name, description: sub || undefined, website: url, 'addr:place': town } }));
+    .map(([id, name, sub, lat, lon, url, town, src, approx]) => ({ type: src === 'ra' ? 'ra' : 'ao', id, lat, lon,
+      tags: { name, description: sub || undefined, website: url || undefined, 'addr:place': town, _approx: approx || undefined } }));
 }
 // Typing for private-list places: museums and natural features keep their category; the rest are curiosities.
 function privateTags(t) {
-  const n = t.name.toLowerCase(), out = { name: t.name, description: t.description, website: t.website, tourism: 'attraction' };
+  const n = t.name.toLowerCase(), out = { name: t.name, description: t.description, website: t.website, 'addr:place': t['addr:place'], _approx: t._approx, tourism: 'attraction' };
   if (/\bmuseum\b/.test(n)) out.tourism = 'museum';
   else if (WEIRD_RE.test(`${t.name} ${t.description || ''}`)) {} // "Lake George Mystery Spot" is a curiosity, not a lake
   else if (/^(mount|mt\.?|lake)\b|\b(mountain|lake|falls|waterfall|gorge|chasm|cave|caverns?|pond|spring|tufa|notch|peak|island|beach|swamp|bog)$/.test(n)) { delete out.tourism; out.natural = 'feature'; }
