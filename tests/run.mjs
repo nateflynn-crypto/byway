@@ -113,6 +113,7 @@ function testPrivate() {
     ['r3', 'Grave of Test Sam', 'Oakwood Ave.', 42.7301, -73.6901, '', 'Troy, NY', 'ra'],
     ['r4', 'Town Centre Curiosity', 'Main St.', 43.3100, -73.6440, '', 'Glens Falls, NY', 'ra', 'town'],
     ['r5', 'Lake George Mystery Spot', 'Canada St.', 43.4300, -73.7300, '', 'Lake George, NY', 'ra', 'town'],
+    ['r6', 'Lake George Test Battlefield Mural', 'Canada St.', 43.4300, -73.7300, '', 'Lake George, NY', 'ra', 'town'],
   ] }));
   const key = spawnSync(process.execPath, [tool, 'newkey'], { encoding: 'utf8' }).stdout.trim();
   const r = spawnSync(process.execPath, [tool, 'encrypt', '--in', list, '--key', key, '--out', out], { encoding: 'utf8' });
@@ -1046,7 +1047,7 @@ test('private list: key link unlocks it; places merge into the drive; nothing re
   assert(d.falls && d.falls.cat === 'nature' && d.museum && d.museum.cat === 'museum', `typing: ${JSON.stringify({ falls: d.falls, museum: d.museum })}`);
   assert(d.far === 0, 'a private place far from the route was included');
   assert(d.fort.length === 1 && d.fort[0].src === 'osm' && /fort-william-henry/.test(d.fort[0].ao || ''), `Fort William Henry should merge into the OpenStreetMap find: ${JSON.stringify(d.fort)}`);
-  assert(d.log && d.log.places === 11 && d.log.nearRoute >= 10, `log: ${JSON.stringify(d.log)}`);
+  assert(d.log && d.log.places === 12 && d.log.nearRoute >= 11, `log: ${JSON.stringify(d.log)}`);
   // still unlocked after a reload without the key in the link
   await page.goto(BASE + TROY);
   await settle(page);
@@ -1068,12 +1069,13 @@ test('private list: Roadside America places join, merge into twins, and show the
   const d = await page.evaluate(() => {
     const S = window.__byway.state, by = n => S.finds.filter(f => f.name === n);
     const pick = f => f && { src: f.src, cat: f.cat, ao: !!f.ao, ra: !!f.ra, approx: f.tags._approx, town: f.tags['addr:place'] };
-    return { mystery: by('Lake George Mystery Spot').map(pick), muffler: by('Big Test Muffler Man').map(pick), fort: by('Fort William Henry').map(pick), grave: by('Grave of Test Sam').map(pick), town: by('Town Centre Curiosity').map(pick) };
+    return { mural: by('Lake George Test Battlefield Mural').map(pick), mystery: by('Lake George Mystery Spot').map(pick), muffler: by('Big Test Muffler Man').map(pick), fort: by('Fort William Henry').map(pick), grave: by('Grave of Test Sam').map(pick), town: by('Town Centre Curiosity').map(pick) };
   });
   assert(d.muffler.length === 1 && d.muffler[0].src === 'roadside' && d.muffler[0].cat === 'weird', `muffler man: ${JSON.stringify(d.muffler)}`);
   assert(d.fort.length === 1 && d.fort[0].src === 'osm' && d.fort[0].ao && d.fort[0].ra, `fort should carry both lists: ${JSON.stringify(d.fort)}`);
   assert(d.grave.length === 1 && d.grave[0].src === 'atlas' && d.grave[0].ra, `grave should merge into the Atlas Obscura place: ${JSON.stringify(d.grave)}`);
   assert(d.town.length === 1 && d.town[0].approx === 'town', `town-centre place: ${JSON.stringify(d.town)}`);
+  assert(d.mural.length === 1 && d.mural[0].src === 'roadside', `a different place in the same town must not merge: ${JSON.stringify(d.mural)}`);
   assert(d.mystery.length === 1 && d.mystery[0].src === 'atlas' && d.mystery[0].ra, `town-centre twin should merge into the pinned place: ${JSON.stringify(d.mystery)}`);
   // card: tag, address, approximate note; opened card links to Roadside America's town map
   await page.click('[data-action="view"][data-view="all"]');

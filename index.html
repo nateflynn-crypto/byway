@@ -1385,7 +1385,7 @@ function recompute() {
   // A private-list place that matches a find already on the list is merged into it (link + a boost)
   // instead of showing twice.
   for (const a of priv) {
-    const m = state.finds.find(f => sameNamedPlace(a, f));
+    const m = state.finds.find(f => f.nkey === a.nkey && sameNamedPlace(a, f)) || state.finds.find(f => sameNamedPlace(a, f));
     if (m) {
       if (a.src === 'atlas') { if (!m.ao && m.src !== 'atlas') { m.ao = a.tags.website; m.score += 1.5; } }
       else if (!m.ra && m.src !== 'roadside') { m.ra = true; m.score += 1.5; }
@@ -1997,9 +1997,12 @@ function sameNamedPlace(a, b) {
   const loose = a.tags._approx === 'town' || b.tags._approx === 'town'; // only the town centre is known: allow for it
   if (a.nkey === b.nkey) return havMi(a.lat, a.lon, b.lat, b.lon) < (loose ? 6 : 1);
   if (havMi(a.lat, a.lon, b.lat, b.lon) > (loose ? 4 : 0.35)) return false;
-  const A = nameTokens(a.nkey), B = new Set(nameTokens(b.nkey));
+  // With only a town to go on, the town's own name ("Lake George …") says nothing, and most words must be shared.
+  const town = loose ? new Set(nameTokens(normName(((a.tags._approx ? a : b).tags['addr:place'] || '').replace(/,.*$/, '')))) : new Set();
+  const A = nameTokens(a.nkey).filter(w => !town.has(w)), B = new Set(nameTokens(b.nkey).filter(w => !town.has(w)));
   if (!A.length || !B.size) return false;
-  return A.filter(w => B.has(w)).length / Math.min(A.length, B.size) >= 0.6;
+  const shared = A.filter(w => B.has(w)).length;
+  return loose ? shared >= 2 && shared / Math.min(A.length, B.size) >= 0.8 : shared / Math.min(A.length, B.size) >= 0.6;
 }
 
 /* ================= oddity guides (links out) =================
