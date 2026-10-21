@@ -258,10 +258,13 @@ footer p{margin:6px 0}
 .then img{width:96px;height:72px;object-fit:cover;border-radius:6px;filter:sepia(.15)}
 .then .fine{margin:0;font-size:12.5px;color:var(--muted)}
 .then b{display:block;font-size:13px;color:var(--ink);margin-bottom:2px}
+.vintage .vg{grid-column:1 / -1;display:block}
 .vintage .vt{display:flex;gap:6px;overflow-x:auto;margin:4px 0 2px;scrollbar-width:none}
+.vintage .vt a{display:block;flex:none;line-height:0}
 .vintage .vt img{width:84px;height:63px;object-fit:cover;border-radius:6px;flex:none;filter:sepia(.15)}
 .vintage .vp{color:var(--muted);font-size:12.5px;line-height:1.5}
-.vintage .vp a{color:var(--ink)}
+.vintage .vp a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+.vintage .vp a:hover{border-bottom-color:var(--muted)}
 .aotag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#1f1b14;color:#f6efe2;font-size:10.5px;font-weight:700;letter-spacing:.04em;vertical-align:1px}
 @media (prefers-color-scheme: dark){ .aotag{background:#f6efe2;color:#1f1b14} }
 .guides .fine{margin:6px 0 0}
@@ -2060,7 +2063,6 @@ function guidesHTML() {
    photographed in a town nearby. */
 const MRG = {
   thumb: p => `https://cdn.loc.gov/service/pnp/mrg/${p}_150px.jpg`,
-  large: p => `https://tile.loc.gov/storage-services/service/pnp/mrg/${p}r.jpg`,
   item: lccn => `https://www.loc.gov/pictures/collection/mrg/item/${lccn}/`,
   town: (t, st) => `https://www.loc.gov/pictures/search/?q=${encodeURIComponent(`${t}, ${st}`)}&co=mrg`,
 };
@@ -2140,7 +2142,7 @@ function vintageHTML() {
     const top = t.places.slice(0, 6), more = t.places.length - top.length;
     const pics = t.places.filter(p => p.pics.length).slice(0, 4);
     return `<li><b>${esc(t.town)}, ${esc(t.st)}</b><span class="mi">mile ${Math.round(t.along).toLocaleString()}</span>
-      <span class="gl" style="display:block">
+      <span class="vg">
         <span class="vt">${pics.map(p => `<a href="${esc(MRG.item(p.pics[0][1]))}" target="_blank" rel="noopener" title="${esc(p.pics[0][2])}"><img src="${esc(MRG.thumb(p.pics[0][0]))}" alt="${esc(p.name)}" loading="lazy"></a>`).join('')}</span>
         <span class="vp">${top.map(p => `<a href="${esc(MRG.item(p.pics[0] ? p.pics[0][1] : ''))}" target="_blank" rel="noopener">${esc(p.name)}</a> ${esc(String(p.y0 || ''))}`).join(' · ')}${more > 0 ? ` · <a href="${esc(MRG.town(t.town, t.st))}" target="_blank" rel="noopener">+${more} more ↗</a>` : ''}</span>
       </span></li>`;

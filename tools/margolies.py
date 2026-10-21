@@ -13,7 +13,6 @@ same name is near that town.
 Output: {"v":1, "source":…, "towns": [[town, state code, lat, lon, [place, …]], …]}
   place: [name, first year, last year, photo count, interest 0–3, [[image path, LCCN, caption], …]]
   image path "00200/00262" → https://cdn.loc.gov/service/pnp/mrg/00200/00262_150px.jpg (thumbnail)
-                             https://tile.loc.gov/storage-services/service/pnp/mrg/00200/00262r.jpg (larger)
   LCCN → https://www.loc.gov/pictures/collection/mrg/item/<LCCN>/
 """
 import argparse, csv, json, re
